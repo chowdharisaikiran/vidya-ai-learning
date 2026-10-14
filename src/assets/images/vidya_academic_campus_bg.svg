@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%">
+  <defs>
+    <!-- Light daylight campus atrium background gradient -->
+    <linearGradient id="lightHallGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="35%" stop-color="#F0F7FF" />
+      <stop offset="70%" stop-color="#EBF4FF" />
+      <stop offset="100%" stop-color="#E2EDFC" />
+    </linearGradient>
+
+    <!-- Natural daylight skylight radiance -->
+    <radialGradient id="lightAtriumSun" cx="50%" cy="15%" r="70%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95" />
+      <stop offset="30%" stop-color="#E0F2FE" stop-opacity="0.6" />
+      <stop offset="70%" stop-color="#BAE6FD" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#E0E7FF" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Warm campus ambient daylight shaft -->
+    <linearGradient id="lightSunBeam" x1="20%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A" stop-opacity="0.25" />
+      <stop offset="40%" stop-color="#BAE6FD" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0" />
+    </linearGradient>
+
+    <!-- Polished Light Campus Terrazzo Floor -->
+    <linearGradient id="lightFloorGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F1F5F9" stop-opacity="0.95" />
+      <stop offset="35%" stop-color="#E2E8F0" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#CBD5E1" stop-opacity="0.85" />
+    </linearGradient>
+  </defs>
+
+  <!-- 1. BASE LIGHT ATRIUM CANVAS -->
+  <rect width="1920" height="1080" fill="url(#lightHallGradient)" />
+  <rect width="1920" height="1080" fill="url(#lightAtriumSun)" />
+
+  <!-- Diagonal architectural sunlight beams through skylights -->
+  <polygon points="300,0 600,0 950,750 650,750" fill="url(#lightSunBeam)" />
+  <polygon points="1100,0 1400,0 1650,750 1350,750" fill="url(#lightSunBeam)" />
+
+  <!-- 2. ARCHITECTURAL GLASS SKYLIGHTS & SOARING ATRIUM ARCHES -->
+  <g opacity="0.35" stroke="#94A3B8" stroke-width="1.5" fill="none">
+    <!-- Tall vertical architectural mullions -->
+    <line x1="240" y1="0" x2="240" y2="760" />
+    <line x1="480" y1="0" x2="480" y2="760" />
+    <line x1="720" y1="0" x2="720" y2="760" />
+    <line x1="960" y1="0" x2="960" y2="760" />
+    <line x1="1200" y1="0" x2="1200" y2="760" />
+    <line x1="1440" y1="0" x2="1440" y2="760" />
+    <line x1="1680" y1="0" x2="1680" y2="760" />
+
+    <!-- Arches -->
+    <path d="M 0 320 Q 240 100 480 320" />
+    <path d="M 480 320 Q 720 100 960 320" />
+    <path d="M 960 320 Q 1200 100 1440 320" />
+    <path d="M 1440 320 Q 1680 100 1920 320" />
+
+    <path d="M 0 200 Q 240 20 480 200" />
+    <path d="M 480 200 Q 720 20 960 200" />
+    <path d="M 960 200 Q 1200 20 1440 200" />
+    <path d="M 1440 200 Q 1680 20 1920 200" />
+  </g>
+
+  <!-- 3. LIGHT CONTEMPORARY BOOKSHELVES & MEZZANINES (Left & Right Flanks) -->
+  <!-- Left Mezzanine (Light modern birch / architectural gallery) -->
+  <g opacity="0.45">
+    <rect x="0" y="240" width="320" height="520" fill="#E2E8F0" rx="4" />
+    <line x1="40" y1="280" x2="300" y2="280" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="40" y1="360" x2="300" y2="360" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="40" y1="440" x2="300" y2="440" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="40" y1="520" x2="300" y2="520" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="40" y1="600" x2="300" y2="600" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="40" y1="680" x2="300" y2="680" stroke="#CBD5E1" stroke-width="3" />
+
+    <!-- Scholarly books on shelves -->
+    <rect x="50" y="295" width="12" height="65" fill="#0284C7" />
+    <rect x="65" y="305" width="16" height="55" fill="#6366F1" />
+    <rect x="84" y="290" width="14" height="70" fill="#8B5CF6" />
+    <rect x="101" y="315" width="10" height="45" fill="#94A3B8" />
+    <rect x="114" y="300" width="15" height="60" fill="#D97706" />
+    <rect x="132" y="292" width="18" height="68" fill="#2563EB" />
+    <rect x="153" y="310" width="12" height="50" fill="#64748B" />
+    <rect x="168" y="295" width="16" height="65" fill="#059669" />
+
+    <rect x="50" y="375" width="15" height="65" fill="#4F46E5" />
+    <rect x="68" y="385" width="12" height="55" fill="#0284C7" />
+    <rect x="83" y="370" width="20" height="70" fill="#DB2777" />
+    <rect x="106" y="380" width="14" height="60" fill="#64748B" />
+    <rect x="123" y="372" width="16" height="68" fill="#3B82F6" />
+  </g>
+
+  <!-- Right Mezzanine -->
+  <g opacity="0.45">
+    <rect x="1600" y="240" width="320" height="520" fill="#E2E8F0" rx="4" />
+    <line x1="1620" y1="280" x2="1880" y2="280" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="1620" y1="360" x2="1880" y2="360" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="1620" y1="440" x2="1880" y2="440" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="1620" y1="520" x2="1880" y2="520" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="1620" y1="600" x2="1880" y2="600" stroke="#CBD5E1" stroke-width="3" />
+    <line x1="1620" y1="680" x2="1880" y2="680" stroke="#CBD5E1" stroke-width="3" />
+
+    <rect x="1630" y="295" width="14" height="65" fill="#0284C7" />
+    <rect x="1647" y="305" width="18" height="55" fill="#6366F1" />
+    <rect x="1668" y="290" width="12" height="70" fill="#059669" />
+    <rect x="1683" y="315" width="15" height="45" fill="#D97706" />
+    <rect x="1701" y="300" width="16" height="60" fill="#2563EB" />
+  </g>
+
+  <!-- 4. STUDENTS COLLABORATING AT LIGHT STUDY COMMONS (Modern Slate Figures) -->
+  <!-- Left Study Cluster -->
+  <g opacity="0.55" transform="translate(180, 580)">
+    <!-- Desk in light architectural timber -->
+    <rect x="20" y="110" width="240" height="12" rx="4" fill="#64748B" />
+    <rect x="35" y="122" width="10" height="90" fill="#94A3B8" />
+    <rect x="235" y="122" width="10" height="90" fill="#94A3B8" />
+
+    <!-- Student A with laptop -->
+    <path d="M 60 100 L 60 160 L 40 210" stroke="#64748B" stroke-width="5" stroke-linecap="round" />
+    <ellipse cx="80" cy="115" rx="18" ry="32" fill="#475569" />
+    <circle cx="88" cy="65" r="14" fill="#475569" />
+    <polygon points="105,108 125,85 130,88 112,110" fill="#0284C7" />
+    <rect x="100" y="108" width="22" height="3" fill="#0F172A" />
+
+    <!-- Student B with notes -->
+    <ellipse cx="195" cy="112" rx="19" ry="34" fill="#475569" />
+    <circle cx="188" cy="62" r="14" fill="#475569" />
+    <polygon points="145,108 165,104 185,108 165,112" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1" />
+  </g>
+
+  <!-- Right Study Cluster -->
+  <g opacity="0.55" transform="translate(1480, 580)">
+    <rect x="20" y="110" width="240" height="12" rx="4" fill="#64748B" />
+    <rect x="35" y="122" width="10" height="90" fill="#94A3B8" />
+    <rect x="235" y="122" width="10" height="90" fill="#94A3B8" />
+
+    <!-- Student C -->
+    <ellipse cx="85" cy="112" rx="18" ry="34" fill="#475569" />
+    <circle cx="92" cy="62" r="14" fill="#475569" />
+    <rect x="110" y="104" width="26" height="6" rx="2" fill="#6366F1" />
+
+    <!-- Student D -->
+    <ellipse cx="190" cy="114" rx="18" ry="33" fill="#475569" />
+    <circle cx="182" cy="64" r="14" fill="#475569" />
+    <polygon points="135,108 152,85 158,88 142,110" fill="#0284C7" />
+  </g>
+
+  <!-- 5. SCHOLASTIC WATERMARK (Graduation Cap in Light Azure) -->
+  <g opacity="0.3" transform="translate(1620, 70) scale(1.4)">
+    <polygon points="50,15 95,35 50,55 5,35" stroke="#3B82F6" stroke-width="2" fill="none" />
+    <path d="M 22 43 L 22 64 Q 50 82 78 64 L 78 43" stroke="#3B82F6" stroke-width="2" fill="none" />
+    <path d="M 50 35 L 85 50 L 88 74" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="2 2" fill="none" />
+    <circle cx="88" cy="76" r="3.5" fill="#3B82F6" />
+  </g>
+
+  <!-- 6. POLISHED LIGHT REFLECTIVE FLOOR -->
+  <rect x="0" y="740" width="1920" height="340" fill="url(#lightFloorGrad)" />
+  <line x1="0" y1="740" x2="1920" y2="740" stroke="#CBD5E1" stroke-width="2" />
+
+  <!-- Grid lines on the reflective floor -->
+  <g opacity="0.25" stroke="#60A5FA" stroke-width="1">
+    <line x1="100" y1="740" x2="0" y2="1080" />
+    <line x1="400" y1="740" x2="250" y2="1080" />
+    <line x1="700" y1="740" x2="600" y2="1080" />
+    <line x1="1000" y1="740" x2="950" y2="1080" />
+    <line x1="1300" y1="740" x2="1350" y2="1080" />
+    <line x1="1600" y1="740" x2="1750" y2="1080" />
+    <line x1="1900" y1="740" x2="2100" y2="1080" />
+
+    <line x1="0" y1="800" x2="1920" y2="800" />
+    <line x1="0" y1="880" x2="1920" y2="880" />
+    <line x1="0" y1="980" x2="1920" y2="980" />
+  </g>
+</svg>

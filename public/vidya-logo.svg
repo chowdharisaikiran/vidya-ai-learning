@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%" fill="none">
+  <defs>
+    <!-- Left Wing Gradient: Royal Blue to Electric Cyan -->
+    <linearGradient id="vidyaWingLeft" x1="18%" y1="12%" x2="82%" y2="88%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="45%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#1D4ED8" />
+    </linearGradient>
+
+    <!-- Right Wing Gradient: Indigo to Violet with Luminous Cyan Accent -->
+    <linearGradient id="vidyaWingRight" x1="20%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="35%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#312E81" />
+    </linearGradient>
+
+    <!-- Center Fold / Ascending Trajectory Shading -->
+    <linearGradient id="vidyaCenterFold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60A5FA" />
+      <stop offset="100%" stop-color="#2563EB" stop-opacity="0.2" />
+    </linearGradient>
+
+    <!-- Beacon Spark Gradient: Golden Amber to Solar Radiance -->
+    <linearGradient id="vidyaSparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A" />
+      <stop offset="50%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+
+    <!-- Soft Glow Filter for the Central Beacon -->
+    <filter id="vidyaSparkGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Ambient Shadow for Apex Base -->
+    <filter id="vidyaMarkShadow" x="-10%" y="-10%" width="120%" height="130%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1E3A8A" flood-opacity="0.32" />
+    </filter>
+  </defs>
+
+  <!-- Group with subtle drop shadow -->
+  <g filter="url(#vidyaMarkShadow)">
+    <!-- Right Wing (Ascending Analytics Trajectory & Dimensional Fold) -->
+    <path
+      d="M64 104 L108 28 C109.2 26 107.5 23.5 105.2 24.2 L82 32 L64 68 L64 104 Z"
+      fill="url(#vidyaWingRight)"
+    />
+
+    <!-- Left Wing (Foundational Knowledge & Ascending Arc) -->
+    <path
+      d="M64 104 L20 28 C18.8 26 20.5 23.5 22.8 24.2 L46 32 L64 74 L64 104 Z"
+      fill="url(#vidyaWingLeft)"
+    />
+
+    <!-- Dimensional Inner Bevel (Knowledge Manuscript Fold / Dynamic Precision) -->
+    <path
+      d="M64 74 L82 32 L68 37 L64 64 Z"
+      fill="url(#vidyaCenterFold)"
+      opacity="0.75"
+    />
+
+    <!-- Left Inner Facet Accent -->
+    <path
+      d="M64 74 L46 32 L60 37 L64 64 Z"
+      fill="#93C5FD"
+      opacity="0.35"
+    />
+
+    <!-- Center Apex Pin / Base Anchor -->
+    <circle cx="64" cy="103" r="3" fill="#1E40AF" />
+
+    <!-- Central Beacon: The Spark of 'Vidya' (Enlightenment, Wisdom & AI Clarity) -->
+    <g filter="url(#vidyaSparkGlow)">
+      <!-- Outer diamond halo -->
+      <polygon
+        points="64,12 68.5,23 79.5,27.5 68.5,32 64,43 59.5,32 48.5,27.5 59.5,23"
+        fill="url(#vidyaSparkGrad)"
+      />
+      <!-- Core brilliant spark -->
+      <polygon
+        points="64,18 66.5,25 73.5,27.5 66.5,30 64,37 61.5,30 54.5,27.5 61.5,25"
+        fill="#FFFFFF"
+      />
+    </g>
+  </g>
+</svg>

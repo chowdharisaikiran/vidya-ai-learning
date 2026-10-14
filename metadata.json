@@ -1,0 +1,6 @@
+{
+  "name": "VIDYA - AI Learning & Student Performance Analytics",
+  "description": "An AI-powered personalized learning and student performance analytics platform with automated role-based dashboards, academic risk prediction, and data science insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
