@@ -19,12 +19,16 @@ import {
   Database,
   RefreshCw,
 } from 'lucide-react';
-import { apiUrl } from '../../lib/apiConfig';
+import { apiUrl, parseApiResponse } from '../../lib/apiConfig';
+import { getActiveAuthToken } from '../../services/vidyaDatabaseService';
 
 export const AdminStudentsView: React.FC = () => {
-  const { allStudents, addStudent, deleteStudent, reloadDataset, refreshStudents, studentsLoading } = useAuth();
+  const { allStudents, refreshStudents, studentsLoading } = useAuth();
   const [search, setSearch] = useState('');
   const [riskFilter, setRiskFilter] = useState<'all' | 'High' | 'Moderate' | 'Low'>('all');
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Add Student Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -66,78 +70,160 @@ export const AdminStudentsView: React.FC = () => {
     return matchesSearch && matchesRisk;
   });
 
-  const handleExportCSV = () => {
-    window.location.href = apiUrl('/api/dataset/export?format=csv');
+  const handleExportCSV = async () => {
+    setActionError(null);
+    try {
+      const token = await getActiveAuthToken();
+      const res = await fetch(apiUrl('/api/admin/dataset/export'), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setActionError(errJson.error || `Export failed with status ${res.status}`);
+        return;
+      }
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = 'vidya_live_students_export.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      setActionSuccess('Successfully exported authorized public.students dataset.');
+      setTimeout(() => setActionSuccess(null), 3500);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to download authenticated export.');
+    }
   };
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.Name) return;
 
-    // Run ML prediction model to calculate Exam Score, Risk, Performance, and Action
-    const pred = calculateAcademicPrediction({
-      Attendance_Percent: formData.Attendance_Percent,
-      Study_Hours_Per_Day: formData.Study_Hours_Per_Day,
-      Assignment_Score: formData.Assignment_Score,
-      Quiz_Score: formData.Quiz_Score,
-      Previous_Score: formData.Previous_Score,
-      Sleep_Hours: formData.Sleep_Hours,
-      Motivation_Level: formData.Motivation_Level,
-      Parental_Support: formData.Parental_Support,
-      Tutoring: formData.Tutoring,
-      Internet_Access: formData.Internet_Access,
-      Stress_Level: formData.Stress_Level,
-      Weak_Subject: formData.Weak_Subject,
-    });
+    setSubmitting(true);
+    setActionError(null);
+    setActionSuccess(null);
 
-    const newStudent: StudentData = {
-      ...formData,
-      Email: formData.Email || `${formData.Student_ID.toLowerCase()}@vidya.edu`,
-      Exam_Score: pred.predictedExamScore,
-      Overall_Score: pred.predictedOverallScore,
-      Performance_Level: pred.performanceLevel,
-      Risk_Level: pred.riskLevel,
-      Recommended_Action: pred.recommendedAction,
-      Subjects: [
-        { subject: 'Mathematics', assignment: 80, quiz: 78, exam: pred.predictedExamScore, overall: 80, grade: 'B+', trend: 'stable' },
-        { subject: 'Physics', assignment: 76, quiz: 74, exam: pred.predictedExamScore, overall: 76, grade: 'B', trend: 'stable' },
-        { subject: 'Chemistry', assignment: 78, quiz: 76, exam: pred.predictedExamScore, overall: 78, grade: 'B+', trend: 'stable' },
-        { subject: 'Computer Science', assignment: 85, quiz: 82, exam: pred.predictedExamScore, overall: 84, grade: 'A-', trend: 'up' },
-        { subject: 'English', assignment: 82, quiz: 80, exam: pred.predictedExamScore, overall: 81, grade: 'A-', trend: 'stable' },
-      ],
-      History: [
-        { month: 'Oct', quizScore: 74, assignmentScore: 76, overallScore: 75, attendance: formData.Attendance_Percent },
-        { month: 'Nov', quizScore: 75, assignmentScore: 77, overallScore: 76, attendance: formData.Attendance_Percent },
-        { month: 'Dec', quizScore: 76, assignmentScore: 78, overallScore: 77, attendance: formData.Attendance_Percent },
-        { month: 'Jan', quizScore: 76, assignmentScore: 78, overallScore: 77, attendance: formData.Attendance_Percent },
-        { month: 'Feb', quizScore: formData.Quiz_Score, assignmentScore: formData.Assignment_Score, overallScore: pred.predictedOverallScore, attendance: formData.Attendance_Percent },
-      ],
-      Intervention_Notes: ['Enrolled into institution student information system with ML risk classification.'],
-      Last_Updated: new Date().toISOString().split('T')[0],
-    };
+    try {
+      const token = await getActiveAuthToken();
+      const res = await fetch(apiUrl('/api/admin/students'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          name: formData.Name,
+          email: formData.Email || undefined,
+          age: formData.Age,
+          gender: formData.Gender,
+          class_grade: formData.Class_Grade,
+          attendance_percent: formData.Attendance_Percent,
+          study_hours_per_day: formData.Study_Hours_Per_Day,
+          previous_score: formData.Previous_Score,
+          quiz_score: formData.Quiz_Score,
+          assignment_score: formData.Assignment_Score,
+          sleep_hours: formData.Sleep_Hours,
+          motivation_level: formData.Motivation_Level,
+          parental_support: formData.Parental_Support,
+          tutoring: formData.Tutoring,
+          internet_access: formData.Internet_Access,
+          stress_level: formData.Stress_Level,
+          weak_subject: formData.Weak_Subject,
+          risk_level: 'Low',
+        }),
+      });
 
-    addStudent(newStudent);
-    setShowAddModal(false);
+      const parsed = await parseApiResponse<{ success: boolean; student: any }>(res, '/api/admin/students');
+      if (!parsed.ok || !parsed.data?.success) {
+        throw new Error(parsed.error || `Failed to create student (Status ${res.status})`);
+      }
+
+      await refreshStudents();
+      setActionSuccess(`Student "${formData.Name}" successfully persisted to public.students.`);
+      setShowAddModal(false);
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      setActionError(err?.message || 'Error creating student in Supabase.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleImportSubmit = (e: React.FormEvent) => {
+  const handleDeleteStudent = async (studentIdStr: string, name: string) => {
+    const numericId = parseInt(studentIdStr.replace(/\D/g, ''), 10);
+    if (isNaN(numericId)) {
+      setActionError(`Cannot delete record with non-numeric ID: ${studentIdStr}`);
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete student #${numericId} (${name})?`)) {
+      return;
+    }
+
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const token = await getActiveAuthToken();
+      const res = await fetch(apiUrl(`/api/admin/students/${numericId}`), {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      const parsed = await parseApiResponse<{ success: boolean; message?: string }>(res, `/api/admin/students/${numericId}`);
+      if (!parsed.ok || !parsed.data?.success) {
+        throw new Error(parsed.error || `Delete failed with status ${res.status}`);
+      }
+
+      await refreshStudents();
+      setActionSuccess(`Student #${numericId} (${name}) removed from public.students.`);
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to delete student.');
+    }
+  };
+
+  const handleImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!importText.trim()) return;
 
+    setActionError(null);
+    setActionSuccess(null);
+
     try {
-      // Support JSON array format
       const parsed = JSON.parse(importText);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        reloadDataset(parsed);
-        setImportSuccessMsg(`Successfully imported ${parsed.length} student records into VIDYA platform.`);
-        setTimeout(() => {
-          setShowImportModal(false);
-          setImportSuccessMsg(null);
-          setImportText('');
-        }, 1500);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        alert('Invalid format. Please provide a non-empty array of student objects.');
+        return;
       }
-    } catch {
-      alert('Invalid JSON format. Please provide an array of student objects with matching Data Science schema.');
+
+      const token = await getActiveAuthToken();
+      const res = await fetch(apiUrl('/api/admin/students/import'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ students: parsed }),
+      });
+
+      const result = await parseApiResponse<{ success: boolean; count: number }>(res, '/api/admin/students/import');
+      if (!result.ok || !result.data?.success) {
+        throw new Error(result.error || `Import failed with status ${res.status}`);
+      }
+
+      await refreshStudents();
+      setImportSuccessMsg(`Successfully imported ${result.data.count} student records into public.students.`);
+      setTimeout(() => {
+        setShowImportModal(false);
+        setImportSuccessMsg(null);
+        setImportText('');
+      }, 1500);
+    } catch (err: any) {
+      setActionError(err?.message || 'Invalid JSON format or server import error.');
     }
   };
 
@@ -201,6 +287,29 @@ export const AdminStudentsView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {actionError && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5 shadow-xs">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <span className="font-bold block">Action Notice</span>
+            <p className="mt-0.5 text-rose-700 leading-relaxed">{actionError}</p>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-rose-500 hover:text-rose-700 font-bold p-1">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {actionSuccess && (
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2.5 shadow-xs">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span className="font-semibold flex-1">{actionSuccess}</span>
+          <button onClick={() => setActionSuccess(null)} className="text-emerald-500 hover:text-emerald-700 font-bold p-1">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-3xl border border-slate-200/80 p-4 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
@@ -288,13 +397,9 @@ export const AdminStudentsView: React.FC = () => {
                   </td>
                   <td className="py-3 px-4 text-right">
                     <button
-                      onClick={() => {
-                        if (confirm(`Remove scholar record ${s.Name} (${s.Student_ID})?`)) {
-                          deleteStudent(s.Student_ID);
-                        }
-                      }}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                      title="Delete student"
+                      onClick={() => handleDeleteStudent(s.Student_ID, s.Name)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                      title="Delete student record"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

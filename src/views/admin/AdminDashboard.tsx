@@ -44,6 +44,7 @@ import {
   TABLE_METADATA,
   ExpectedTableName,
 } from '../../services/databaseHealthService';
+import { AcademicPerformanceOverviewChart } from '../../components/charts/AcademicPerformanceOverviewChart';
 
 interface AdminDashboardProps {
   onNavigate: (tab: string) => void;
@@ -179,8 +180,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     runFullDatabaseHealthCheck();
   }, [loadMetrics, runConnectionCheck, runFullDatabaseHealthCheck]);
 
-  const exportCSV = () => {
-    window.location.href = apiUrl('/api/dataset/export?format=csv');
+  const exportCSV = async () => {
+    try {
+      const token = await getActiveAuthToken();
+      const res = await fetch(apiUrl('/api/admin/dataset/export'), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        alert(errJson.error || `Export failed with status ${res.status}`);
+        return;
+      }
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = 'vidya_live_students_export.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to download authenticated export.');
+    }
   };
 
   return (
@@ -517,15 +539,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 mb-4 gap-2">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900 tracking-tight">
-                  Academic Performance Synthesis
+                  Academic Performance
                 </h3>
                 <p className="text-xs text-slate-500 font-normal">
                   Synthesized across {metrics?.validAcadCount ?? 0} records in <code className="font-mono text-slate-700">academic_performance</code>
                 </p>
               </div>
-              <span className="text-xs font-mono font-medium text-slate-700 bg-slate-100 px-3 py-1 rounded-lg border border-slate-200 self-start sm:self-auto">
-                Model: {metrics?.predictionModelName || 'Random Forest Pipeline'}
-              </span>
             </div>
 
             {loading ? (
@@ -565,18 +584,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               </div>
             ) : (
               <>
-                {/* Documented Assessment Formula Callout */}
-                <div className="mb-4 p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200/80 text-xs text-slate-600">
-                  <div className="flex items-start gap-2">
-                    <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <span className="font-bold text-slate-800">Performance Calculation Formula:</span>
-                      <p className="leading-relaxed">
-                        Student Score = <span className="font-mono text-slate-800 font-medium">Quiz Average (out of 10) + Midterm Marks (out of 30) + Final Exam Marks (out of 60)</span>.
-                        Null or invalid numeric values are ignored; average is calculated across all valid non-null rows in <span className="font-mono text-slate-800">academic_performance</span>.
-                      </p>
-                    </div>
-                  </div>
+                {/* Academic Performance Overview Bar Chart (Normalized comparison) */}
+                <div className="mb-4">
+                  <AcademicPerformanceOverviewChart
+                    avgQuiz={metrics?.avgQuiz}
+                    avgMidterm={metrics?.avgMidterm}
+                    avgFinal={metrics?.avgFinal}
+                    validCount={metrics?.validAcadCount}
+                  />
                 </div>
 
                 {/* Real Component Breakdown */}
@@ -607,7 +622,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
                   <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/80">
                     <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold block">
-                      Mean Final Marks
+                      Mean Final Exam Marks
                     </span>
                     <span className="text-2xl font-bold text-slate-900 font-mono tracking-tight mt-1 block">
                       {metrics?.avgFinal !== null && metrics?.avgFinal !== undefined ? `${metrics.avgFinal} / 60` : 'N/A'}

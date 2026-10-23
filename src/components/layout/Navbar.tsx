@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   UserCheck,
   Database,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -66,29 +67,13 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
   const currentRoleBadge = role ? roleBadgeConfig[role] : roleBadgeConfig.student;
   const RoleIcon = currentRoleBadge.icon;
 
-  const mockNotifications = [
-    {
-      id: 1,
-      title: 'AI Prediction Alert',
-      message: 'Weekly risk assessment recalculated for all STEM cohorts.',
-      time: '12m ago',
-      type: 'warning',
-    },
-    {
-      id: 2,
-      title: 'Study Plan Generated',
-      message: 'Gemini synthesized a new 7-day revision schedule.',
-      time: '1h ago',
-      type: 'info',
-    },
-    {
-      id: 3,
-      title: 'Attendance Milestone',
-      message: 'Cohort 11-A attendance stabilized at 91.2%.',
-      time: '3h ago',
-      type: 'success',
-    },
-  ];
+  const notifications: Array<{
+    id: number;
+    title: string;
+    message: string;
+    time: string;
+    type: 'warning' | 'info' | 'success';
+  }> = [];
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 lg:px-6 py-2.5 transition-all">
@@ -199,33 +184,45 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
                 setShowNotifications(!showNotifications);
                 setShowProfileMenu(false);
               }}
-              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors relative"
+              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors relative cursor-pointer"
               aria-label="View notifications"
             >
               <Bell className="w-4 h-4" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white" />
+              {notifications.length > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white" />
+              )}
             </button>
 
             {showNotifications && (
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-3 z-50 animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100 px-2">
                   <span className="text-xs font-bold text-slate-800">System Notifications</span>
-                  <span className="text-[10px] text-blue-600 font-semibold cursor-pointer">Mark all read</span>
+                  {notifications.length > 0 && (
+                    <span className="text-[10px] text-blue-600 font-semibold cursor-pointer">Mark all read</span>
+                  )}
                 </div>
-                <div className="space-y-2 mt-2">
-                  {mockNotifications.map((n) => (
-                    <div
-                      key={n.id}
-                      className="p-2 rounded-xl bg-slate-50/80 hover:bg-slate-100 text-xs transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between font-semibold text-slate-800">
-                        <span>{n.title}</span>
-                        <span className="text-[10px] text-slate-400 font-normal">{n.time}</span>
+                {notifications.length === 0 ? (
+                  <div className="py-6 px-3 text-center space-y-1">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500 mx-auto mb-1.5" />
+                    <p className="text-xs font-semibold text-slate-800">No New Notifications</p>
+                    <p className="text-[11px] text-slate-400">You're completely up to date.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 mt-2">
+                    {notifications.map((n) => (
+                      <div
+                        key={n.id}
+                        className="p-2 rounded-xl bg-slate-50/80 hover:bg-slate-100 text-xs transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between font-semibold text-slate-800">
+                          <span>{n.title}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">{n.time}</span>
+                        </div>
+                        <p className="text-slate-600 text-[11px] mt-0.5 leading-relaxed">{n.message}</p>
                       </div>
-                      <p className="text-slate-600 text-[11px] mt-0.5 leading-relaxed">{n.message}</p>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

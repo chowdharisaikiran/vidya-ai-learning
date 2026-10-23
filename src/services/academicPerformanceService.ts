@@ -1,4 +1,5 @@
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, getActiveAuthToken } from '../lib/supabase';
+import { apiUrl, parseApiResponse } from '../lib/apiConfig';
 import type { SubjectScore, PerformanceLevel } from '../types';
 
 /**
@@ -251,6 +252,36 @@ export async function fetchStudentAcademicPerformance(
     }
 
     if (!data || data.length === 0) {
+      // If direct PostgREST client returned 0 rows, check authenticated student endpoint
+      try {
+        const token = await getActiveAuthToken();
+        if (token) {
+          const res = await fetch(apiUrl('/api/student/academic-performance'), {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const parsed = await parseApiResponse<{
+            success: boolean;
+            isLinked: boolean;
+            student_id?: number | null;
+            performance?: SupabaseAcademicPerformanceRow | null;
+          }>(res, '/api/student/academic-performance');
+
+          if (parsed.ok && parsed.data?.success && parsed.data.performance) {
+            return {
+              records: [parsed.data.performance],
+              source: 'database',
+              error: null,
+              isEmpty: false,
+            };
+          }
+        }
+      } catch (endpointErr) {
+        // Fall back gracefully; preserve empty / loading / unmapped state
+      }
+
       return {
         records: [],
         source: 'fallback',

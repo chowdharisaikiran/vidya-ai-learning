@@ -8,7 +8,7 @@ import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 import { INITIAL_STUDENTS, INITIAL_TEACHERS, INITIAL_USERS } from './src/data/mockData.ts';
 import { calculateAcademicPrediction } from './src/services/mlModel.ts';
-import type { StudentData, TeacherData, UserAccount } from './src/types/index.ts';
+import type { StudentData, TeacherData, UserAccount, SubjectScore } from './src/types/index.ts';
 
 dotenv.config();
 
@@ -530,6 +530,121 @@ async function verifyTeacherCaller(req: express.Request): Promise<{
   }
 }
 
+async function verifyStudentCaller(req: express.Request): Promise<{
+  isAuthorized: boolean;
+  callerId?: string;
+  studentId?: number | null;
+  role?: string;
+  error?: string;
+}> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { isAuthorized: false, error: 'Unauthorized: Missing or invalid Authorization header.' };
+  }
+
+  const token = authHeader.split(' ')[1].trim();
+  if (!token) {
+    return { isAuthorized: false, error: 'Unauthorized: Empty bearer token.' };
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return { isAuthorized: false, error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.' };
+  }
+
+  try {
+    const { data: { user: authUser }, error: authErr } = await supabaseAdmin.auth.getUser(token);
+    if (authErr || !authUser) {
+      return { isAuthorized: false, error: 'Unauthorized: Invalid or expired Supabase authentication session.' };
+    }
+
+    const { data: profile, error: profErr } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, role, student_id, full_name, email')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (profErr || !profile) {
+      return { isAuthorized: false, error: 'Forbidden: User profile could not be verified in user_profiles.' };
+    }
+
+    // Explicit constraint: Allow only the student role on this endpoint
+    if (profile.role !== 'student') {
+      return { isAuthorized: false, error: 'Forbidden: Caller is not an authorized student in user_profiles.' };
+    }
+
+    return {
+      isAuthorized: true,
+      callerId: authUser.id,
+      studentId: profile.student_id !== null && profile.student_id !== undefined ? Number(profile.student_id) : null,
+      role: profile.role,
+    };
+  } catch (err: any) {
+    return { isAuthorized: false, error: err?.message || 'Authentication error verifying student token.' };
+  }
+}
+
+async function verifyAnyCaller(req: express.Request): Promise<{
+  isAuthorized: boolean;
+  callerId?: string;
+  role?: string;
+  studentId?: number | null;
+  staffId?: string | null;
+  fullName?: string;
+  email?: string;
+  error?: string;
+}> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { isAuthorized: false, role: 'guest', error: 'Missing Authorization header.' };
+  }
+
+  const token = authHeader.split(' ')[1].trim();
+  if (!token) {
+    return { isAuthorized: false, role: 'guest', error: 'Empty bearer token.' };
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return { isAuthorized: false, role: 'guest', error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured.' };
+  }
+
+  try {
+    const { data: { user: authUser }, error: authErr } = await supabaseAdmin.auth.getUser(token);
+    if (authErr || !authUser) {
+      return { isAuthorized: false, role: 'guest', error: 'Unauthorized: Invalid or expired Supabase authentication session.' };
+    }
+
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, role, student_id, staff_id, full_name, email')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (!profile) {
+      return {
+        isAuthorized: true,
+        callerId: authUser.id,
+        role: 'guest',
+        email: authUser.email,
+        fullName: authUser.user_metadata?.full_name || authUser.email,
+      };
+    }
+
+    return {
+      isAuthorized: true,
+      callerId: authUser.id,
+      role: profile.role,
+      studentId: profile.student_id !== null && profile.student_id !== undefined ? Number(profile.student_id) : null,
+      staffId: profile.staff_id || null,
+      fullName: profile.full_name,
+      email: profile.email || authUser.email,
+    };
+  } catch (err: any) {
+    return { isAuthorized: false, role: 'guest', error: err?.message || 'Authentication error verifying token.' };
+  }
+}
+
 // ================= ADMIN MANAGEMENT API =================
 // Expected Vidya schema tables for comprehensive database health checks
 const EXPECTED_VIDYA_TABLES = [
@@ -698,6 +813,26 @@ app.all('/api/admin/database-health', async (req, res) => {
   }
 });
 
+app.get('/api/admin/config-status', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { url } = getCleanSupabaseConfig();
+  const hasSecret = Boolean(process.env.SUPABASE_SECRET_KEY);
+  const isConfigured = Boolean(url && hasSecret);
+
+  return res.json({
+    success: true,
+    configured: isConfigured,
+    databaseConnected: Boolean(url),
+    message: isConfigured
+      ? 'Secure administrative engine fully operational.'
+      : 'SUPABASE_SECRET_KEY is not configured on the server. Privileged mutations are locked.',
+  });
+});
+
 app.get('/api/admin/users', async (req, res) => {
   const auth = await verifyAdminCaller(req);
   if (!auth.isAuthorized) {
@@ -755,6 +890,457 @@ app.get('/api/admin/students', async (req, res) => {
     return res.json({ success: true, students: data || [] });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Server error fetching students.' });
+  }
+});
+
+app.post('/api/admin/students', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service is not configured.' });
+  }
+
+  const body = req.body;
+  if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+    return res.status(400).json({ error: 'Student name is required.' });
+  }
+
+  try {
+    let studentId: number;
+    if (body.student_id !== undefined && body.student_id !== null && body.student_id !== '') {
+      studentId = parseInt(String(body.student_id).replace(/\D/g, ''), 10);
+      if (isNaN(studentId)) {
+        return res.status(400).json({ error: 'Invalid numeric student_id provided.' });
+      }
+
+      // Check duplicate
+      const { data: existing } = await supabaseAdmin
+        .from('students')
+        .select('student_id')
+        .eq('student_id', studentId)
+        .maybeSingle();
+
+      if (existing) {
+        return res.status(409).json({ error: `Student with ID #${studentId} already exists in the institutional database.` });
+      }
+    } else {
+      // Find max student_id + 1
+      const { data: maxRow } = await supabaseAdmin
+        .from('students')
+        .select('student_id')
+        .order('student_id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      studentId = maxRow && typeof maxRow.student_id === 'number' ? maxRow.student_id + 1 : 1;
+    }
+
+    const newRecord = {
+      student_id: studentId,
+      name: body.name.trim(),
+      email: body.email ? String(body.email).trim() : null,
+      age: Number(body.age) || 17,
+      gender: body.gender || 'Male',
+      class_grade: body.class_grade || 'Grade 11-A',
+      attendance_percent: Number(body.attendance_percent) || 85,
+      study_hours_per_day: Number(body.study_hours_per_day) || 3.5,
+      previous_score: Number(body.previous_score) || 75,
+      quiz_score: Number(body.quiz_score) || 75,
+      assignment_score: Number(body.assignment_score) || 75,
+      sleep_hours: Number(body.sleep_hours) || 7.0,
+      motivation_level: body.motivation_level || 'Medium',
+      parental_support: body.parental_support || 'Medium',
+      tutoring: body.tutoring || 'No',
+      internet_access: body.internet_access || 'Yes',
+      stress_level: body.stress_level || 'Medium',
+      weak_subject: body.weak_subject || 'Mathematics',
+      risk_level: body.risk_level || 'Low',
+      current_gpa: body.current_gpa !== undefined && body.current_gpa !== null ? Number(body.current_gpa) : null,
+    };
+
+    const { data: inserted, error: insErr } = await supabaseAdmin
+      .from('students')
+      .insert(newRecord)
+      .select()
+      .single();
+
+    if (insErr) {
+      return res.status(500).json({ error: insErr.message });
+    }
+
+    return res.status(201).json({ success: true, student: inserted });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to create student record in Supabase.' });
+  }
+});
+
+app.put('/api/admin/students/:id', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service is not configured.' });
+  }
+
+  const studentId = parseInt(req.params.id, 10);
+  if (isNaN(studentId)) {
+    return res.status(400).json({ error: 'Invalid student ID parameter.' });
+  }
+
+  try {
+    const { data: existing, error: existErr } = await supabaseAdmin
+      .from('students')
+      .select('student_id')
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (existErr || !existing) {
+      return res.status(404).json({ error: `Student #${studentId} not found.` });
+    }
+
+    const body = req.body;
+    const updates: Record<string, any> = {};
+    if (body.name !== undefined) updates.name = String(body.name).trim();
+    if (body.email !== undefined) updates.email = body.email ? String(body.email).trim() : null;
+    if (body.age !== undefined) updates.age = Number(body.age);
+    if (body.gender !== undefined) updates.gender = body.gender;
+    if (body.class_grade !== undefined) updates.class_grade = body.class_grade;
+    if (body.attendance_percent !== undefined) updates.attendance_percent = Number(body.attendance_percent);
+    if (body.study_hours_per_day !== undefined) updates.study_hours_per_day = Number(body.study_hours_per_day);
+    if (body.previous_score !== undefined) updates.previous_score = Number(body.previous_score);
+    if (body.quiz_score !== undefined) updates.quiz_score = Number(body.quiz_score);
+    if (body.assignment_score !== undefined) updates.assignment_score = Number(body.assignment_score);
+    if (body.sleep_hours !== undefined) updates.sleep_hours = Number(body.sleep_hours);
+    if (body.motivation_level !== undefined) updates.motivation_level = body.motivation_level;
+    if (body.parental_support !== undefined) updates.parental_support = body.parental_support;
+    if (body.tutoring !== undefined) updates.tutoring = body.tutoring;
+    if (body.internet_access !== undefined) updates.internet_access = body.internet_access;
+    if (body.stress_level !== undefined) updates.stress_level = body.stress_level;
+    if (body.weak_subject !== undefined) updates.weak_subject = body.weak_subject;
+    if (body.risk_level !== undefined) updates.risk_level = body.risk_level;
+    if (body.current_gpa !== undefined) updates.current_gpa = body.current_gpa !== null ? Number(body.current_gpa) : null;
+
+    const { data: updated, error: updErr } = await supabaseAdmin
+      .from('students')
+      .update(updates)
+      .eq('student_id', studentId)
+      .select()
+      .single();
+
+    if (updErr) {
+      return res.status(500).json({ error: updErr.message });
+    }
+
+    return res.json({ success: true, student: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to update student record.' });
+  }
+});
+
+app.delete('/api/admin/students/:id', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service is not configured.' });
+  }
+
+  const studentId = parseInt(req.params.id, 10);
+  if (isNaN(studentId)) {
+    return res.status(400).json({ error: 'Invalid numeric student ID parameter.' });
+  }
+
+  try {
+    const { data: existing } = await supabaseAdmin
+      .from('students')
+      .select('student_id')
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (!existing) {
+      return res.status(404).json({ error: `Student #${studentId} does not exist.` });
+    }
+
+    // Inspect foreign-key and dependent records
+    const [hasPerf, hasAtt, hasPred, hasRec, hasLearn, hasProfile] = await Promise.all([
+      supabaseAdmin.from('academic_performance').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+      supabaseAdmin.from('student_attendance').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+      supabaseAdmin.from('predictions').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+      supabaseAdmin.from('recommendations').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+      supabaseAdmin.from('learning_profile').select('student_id', { count: 'exact', head: true }).eq('student_id', studentId),
+      supabaseAdmin.from('user_profiles').select('id', { count: 'exact', head: true }).eq('student_id', studentId),
+    ]);
+
+    const dependentBreakdown: string[] = [];
+    if (hasPerf.count) dependentBreakdown.push(`${hasPerf.count} academic performance record(s)`);
+    if (hasAtt.count) dependentBreakdown.push(`${hasAtt.count} attendance record(s)`);
+    if (hasPred.count) dependentBreakdown.push(`${hasPred.count} prediction record(s)`);
+    if (hasRec.count) dependentBreakdown.push(`${hasRec.count} recommendation record(s)`);
+    if (hasLearn.count) dependentBreakdown.push(`${hasLearn.count} learning profile record(s)`);
+    if (hasProfile.count) dependentBreakdown.push(`${hasProfile.count} linked user profile account(s)`);
+
+    if (dependentBreakdown.length > 0) {
+      return res.status(409).json({
+        error: `Cannot delete student #${studentId}: Safe deletion blocked. Active dependent records exist in Supabase (${dependentBreakdown.join(', ')}). Manual institutional review required before removing primary student record.`,
+        dependentRecords: dependentBreakdown,
+      });
+    }
+
+    const { error: delErr } = await supabaseAdmin
+      .from('students')
+      .delete()
+      .eq('student_id', studentId);
+
+    if (delErr) {
+      return res.status(500).json({ error: delErr.message });
+    }
+
+    return res.json({ success: true, message: `Student #${studentId} deleted successfully.` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to delete student.' });
+  }
+});
+
+app.post('/api/admin/students/import', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service is not configured.' });
+  }
+
+  const studentsList = req.body.students;
+  if (!Array.isArray(studentsList) || studentsList.length === 0) {
+    return res.status(400).json({ error: 'An array of student records is required for import.' });
+  }
+
+  try {
+    const { data: maxRow } = await supabaseAdmin
+      .from('students')
+      .select('student_id')
+      .order('student_id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let nextId = maxRow && typeof maxRow.student_id === 'number' ? maxRow.student_id + 1 : 1;
+
+    const sanitizedRows = studentsList.map((s: any) => {
+      const parsedId = s.student_id || s.Student_ID
+        ? parseInt(String(s.student_id || s.Student_ID).replace(/\D/g, ''), 10)
+        : nextId++;
+
+      return {
+        student_id: isNaN(parsedId) ? nextId++ : parsedId,
+        name: s.name || s.Name || 'Student',
+        email: s.email || s.Email || null,
+        age: Number(s.age || s.Age) || 17,
+        gender: s.gender || s.Gender || 'Male',
+        class_grade: s.class_grade || s.Class_Grade || 'Grade 11-A',
+        attendance_percent: Number(s.attendance_percent || s.Attendance_Percent) || 85,
+        study_hours_per_day: Number(s.study_hours_per_day || s.Study_Hours_Per_Day) || 3.5,
+        previous_score: Number(s.previous_score || s.Previous_Score) || 75,
+        quiz_score: Number(s.quiz_score || s.Quiz_Score) || 75,
+        assignment_score: Number(s.assignment_score || s.Assignment_Score) || 75,
+        sleep_hours: Number(s.sleep_hours || s.Sleep_Hours) || 7.0,
+        motivation_level: s.motivation_level || s.Motivation_Level || 'Medium',
+        parental_support: s.parental_support || s.Parental_Support || 'Medium',
+        tutoring: s.tutoring || s.Tutoring || 'No',
+        internet_access: s.internet_access || s.Internet_Access || 'Yes',
+        stress_level: s.stress_level || s.Stress_Level || 'Medium',
+        weak_subject: s.weak_subject || s.Weak_Subject || 'Mathematics',
+        risk_level: s.risk_level || s.Risk_Level || 'Low',
+        current_gpa: s.current_gpa || s.Current_GPA ? Number(s.current_gpa || s.Current_GPA) : null,
+      };
+    });
+
+    const { error: upsertErr } = await supabaseAdmin
+      .from('students')
+      .upsert(sanitizedRows, { onConflict: 'student_id' });
+
+    if (upsertErr) {
+      return res.status(500).json({ error: upsertErr.message });
+    }
+
+    return res.json({ success: true, count: sanitizedRows.length });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to import student records into Supabase.' });
+  }
+});
+
+app.get('/api/admin/dataset/export', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service is not configured.' });
+  }
+
+  try {
+    const { data: dbStudents, error } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .order('student_id', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const headers = [
+      'Student_ID',
+      'Name',
+      'Email',
+      'Age',
+      'Gender',
+      'Class_Grade',
+      'Attendance_Percent',
+      'Study_Hours_Per_Day',
+      'Previous_Score',
+      'Quiz_Score',
+      'Assignment_Score',
+      'Sleep_Hours',
+      'Motivation_Level',
+      'Parental_Support',
+      'Tutoring',
+      'Internet_Access',
+      'Stress_Level',
+      'Current_GPA',
+      'Risk_Level',
+      'Weak_Subject',
+      'Created_At',
+    ];
+
+    const escapeCsv = (val: any) => {
+      if (val === null || val === undefined) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = (dbStudents || []).map((s: any) => [
+      s.student_id,
+      escapeCsv(s.name),
+      escapeCsv(s.email),
+      s.age ?? '',
+      escapeCsv(s.gender),
+      escapeCsv(s.class_grade),
+      s.attendance_percent ?? '',
+      s.study_hours_per_day ?? '',
+      s.previous_score ?? '',
+      s.quiz_score ?? '',
+      s.assignment_score ?? '',
+      s.sleep_hours ?? '',
+      escapeCsv(s.motivation_level),
+      escapeCsv(s.parental_support),
+      escapeCsv(s.tutoring),
+      escapeCsv(s.internet_access),
+      escapeCsv(s.stress_level),
+      s.current_gpa ?? '',
+      escapeCsv(s.risk_level),
+      escapeCsv(s.weak_subject),
+      escapeCsv(s.created_at),
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map((r: any[]) => r.join(','))].join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="vidya_live_students_export.csv"');
+    return res.send(csvContent);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to export live dataset.' });
+  }
+});
+
+// Admin-only rich student search with candidate details and conflict/mapping annotation
+app.get('/api/admin/students/search', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const limit = Math.min(parseInt(String(req.query.limit || '50'), 10) || 50, 100);
+
+  try {
+    let studentQuery = supabaseAdmin
+      .from('students')
+      .select('student_id, name, age, gender, email, class_grade, current_gpa, risk_level, attendance_percent')
+      .order('student_id', { ascending: true })
+      .limit(limit);
+
+    if (query) {
+      const isNumeric = /^\d+$/.test(query);
+      if (isNumeric) {
+        studentQuery = studentQuery.or(`student_id.eq.${parseInt(query, 10)},name.ilike.%${query}%`);
+      } else {
+        studentQuery = studentQuery.ilike('name', `%${query}%`);
+      }
+    }
+
+    const { data: studentsData, error: stuError } = await studentQuery;
+    if (stuError) {
+      return res.status(500).json({ error: stuError.message });
+    }
+
+    // Retrieve active student mappings from user_profiles to annotate mapping status
+    const { data: mappedProfiles, error: profileErr } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, full_name, email, role, student_id')
+      .not('student_id', 'is', null);
+
+    const mappedMap = new Map<number, { id: string; email: string; fullName: string }>();
+    if (mappedProfiles && !profileErr) {
+      for (const p of mappedProfiles) {
+        if (p.student_id !== null && p.student_id !== undefined) {
+          mappedMap.set(p.student_id, {
+            id: p.id,
+            email: p.email,
+            fullName: p.full_name,
+          });
+        }
+      }
+    }
+
+    const annotatedStudents = (studentsData || []).map((s) => {
+      const mappedUser = mappedMap.get(s.student_id) || null;
+      return {
+        ...s,
+        isMapped: Boolean(mappedUser),
+        mappedUser,
+      };
+    });
+
+    return res.json({
+      success: true,
+      total: annotatedStudents.length,
+      students: annotatedStudents,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error searching students.' });
   }
 });
 
@@ -1267,6 +1853,22 @@ app.post('/api/admin/users/:id/role-mapping', async (req, res) => {
   }
 
   const targetUserId = req.params.id;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!targetUserId || !uuidRegex.test(targetUserId)) {
+    return res.status(400).json({ error: `Invalid user account UUID: '${targetUserId}'. Must be a valid UUID format.` });
+  }
+
+  // Explicit verification: check that target user exists in public.user_profiles
+  const { data: targetUserRecord, error: targetUserErr } = await supabaseAdmin
+    .from('user_profiles')
+    .select('id, full_name, email, role, student_id, staff_id')
+    .eq('id', targetUserId)
+    .maybeSingle();
+
+  if (targetUserErr || !targetUserRecord) {
+    return res.status(404).json({ error: `User profile with UUID '${targetUserId}' does not exist in the database.` });
+  }
+
   const { role, studentId, staffId } = req.body;
 
   // 1. Role validation
@@ -1292,12 +1894,46 @@ app.post('/api/admin/users/:id/role-mapping', async (req, res) => {
       // Explicit verification: check that student exists in public.students
       const { data: studentRecord, error: stuLookupErr } = await supabaseAdmin
         .from('students')
-        .select('student_id, name')
+        .select('student_id, name, age, gender, class_grade')
         .eq('student_id', parsedNum)
         .maybeSingle();
 
       if (stuLookupErr || !studentRecord) {
         return res.status(400).json({ error: `Student record #${parsedNum} does not exist in the public.students dataset.` });
+      }
+
+      // Conflict detection: verify if another user is already mapped to this student_id
+      const { data: existingUserWithStudent, error: conflictErr } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id, full_name, email, role, student_id')
+        .eq('student_id', parsedNum)
+        .neq('id', targetUserId)
+        .maybeSingle();
+
+      if (existingUserWithStudent && !req.body.overrideExisting) {
+        return res.status(409).json({
+          success: false,
+          error: `Conflict: Student record #${parsedNum} (${studentRecord.name}) is already mapped to account '${existingUserWithStudent.full_name || 'User'}' (${existingUserWithStudent.email}). Explicit administrator confirmation is required to reassign this student record.`,
+          isConflict: true,
+          conflictingUser: {
+            id: existingUserWithStudent.id,
+            email: existingUserWithStudent.email,
+            fullName: existingUserWithStudent.full_name,
+            studentId: existingUserWithStudent.student_id,
+          },
+          student: studentRecord,
+        });
+      }
+
+      // If overrideExisting is explicitly true, atomically unlink the previous user
+      if (existingUserWithStudent && req.body.overrideExisting) {
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({
+            student_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingUserWithStudent.id);
       }
 
       sanitizedStudentId = parsedNum;
@@ -1316,6 +1952,39 @@ app.post('/api/admin/users/:id/role-mapping', async (req, res) => {
 
       if (staffLookupErr || !staffRecord) {
         return res.status(400).json({ error: `Staff member '${cleanStaffId}' does not exist in the public.staff dataset.` });
+      }
+
+      // Conflict detection for staff mapping
+      const { data: existingUserWithStaff, error: staffConflictErr } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id, full_name, email, role, staff_id')
+        .eq('staff_id', cleanStaffId)
+        .neq('id', targetUserId)
+        .maybeSingle();
+
+      if (existingUserWithStaff && !req.body.overrideExisting) {
+        return res.status(409).json({
+          success: false,
+          error: `Conflict: Faculty record '${cleanStaffId}' (${staffRecord.staff_name}) is already mapped to account '${existingUserWithStaff.full_name || 'User'}' (${existingUserWithStaff.email}). Explicit administrator confirmation is required to reassign this staff record.`,
+          isConflict: true,
+          conflictingUser: {
+            id: existingUserWithStaff.id,
+            email: existingUserWithStaff.email,
+            fullName: existingUserWithStaff.full_name,
+            staffId: existingUserWithStaff.staff_id,
+          },
+          staff: staffRecord,
+        });
+      }
+
+      if (existingUserWithStaff && req.body.overrideExisting) {
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({
+            staff_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingUserWithStaff.id);
       }
 
       sanitizedStaffId = cleanStaffId;
@@ -1359,6 +2028,106 @@ app.post('/api/admin/users/:id/role-mapping', async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Failed to update user profile on Supabase.' });
+  }
+});
+
+// Admin-only dedicated endpoint to unlink a student account
+app.post('/api/admin/users/:id/unlink-student', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server configuration error: SUPABASE_SECRET_KEY missing.', isSetupError: true });
+  }
+
+  const targetUserId = req.params.id;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!targetUserId || !uuidRegex.test(targetUserId)) {
+    return res.status(400).json({ error: `Invalid user account UUID: '${targetUserId}'. Must be a valid UUID format.` });
+  }
+
+  // Explicit verification: check that target user exists in public.user_profiles
+  const { data: targetUserRecord, error: targetUserErr } = await supabaseAdmin
+    .from('user_profiles')
+    .select('id, full_name, email, role, student_id')
+    .eq('id', targetUserId)
+    .maybeSingle();
+
+  if (targetUserErr || !targetUserRecord) {
+    return res.status(404).json({ error: `User profile with UUID '${targetUserId}' does not exist in the database.` });
+  }
+
+  try {
+    const { data: updated, error } = await supabaseAdmin
+      .from('user_profiles')
+      .update({ student_id: null, updated_at: new Date().toISOString() })
+      .eq('id', targetUserId)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Student account successfully unlinked.',
+      user: updated,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to unlink student account.' });
+  }
+});
+
+// ================= STUDENT SPECIFIC API =================
+// 1. Authenticated Student: View own linked academic performance record
+app.get('/api/student/academic-performance', async (req, res) => {
+  const auth = await verifyStudentCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  // Derive student ID exclusively from authenticated user profile; ignore any client-supplied parameters
+  if (auth.studentId === null || auth.studentId === undefined) {
+    return res.json({
+      success: true,
+      isLinked: false,
+      student_id: null,
+      performance: null,
+      message: 'Student account is not linked to an institutional record in user_profiles. Contact administrator.',
+    });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('academic_performance')
+      .select('student_id, quiz1_marks, quiz2_marks, quiz3_marks, quiz_average, midterm_marks, final_marks, previous_gpa')
+      .eq('student_id', auth.studentId)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({
+      success: true,
+      isLinked: true,
+      student_id: auth.studentId,
+      performance: data || null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error fetching student academic performance.' });
   }
 });
 
@@ -1577,10 +2346,107 @@ app.post('/api/predict/risk', (req, res) => {
 
 // ================= AI RECOMMENDATIONS API (GEMINI INTEGRATION) =================
 app.post('/api/ai/recommendations', async (req, res) => {
-  const { student, customNotes } = req.body;
-  if (!student) {
-    return res.status(400).json({ error: 'Student data is required for AI recommendation generation' });
+  const auth = await verifyAnyCaller(req);
+  if (!auth.isAuthorized || !auth.callerId) {
+    return res.status(401).json({ error: auth.error || 'Unauthorized: Valid Supabase authentication session required.' });
   }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server database service unavailable.' });
+  }
+
+  let targetStudentId: number | null = null;
+  const clientStudentId = req.body.studentId || (req.body.student?.Student_ID ? Number(String(req.body.student.Student_ID).replace(/\D/g, '')) : null);
+
+  if (auth.role === 'student') {
+    if (!auth.studentId) {
+      return res.status(403).json({ error: 'Forbidden: Student account is not yet linked to an institutional record.' });
+    }
+    if (clientStudentId && Number(clientStudentId) !== Number(auth.studentId)) {
+      return res.status(403).json({ error: 'Forbidden: You cannot request recommendations for another student.' });
+    }
+    targetStudentId = auth.studentId;
+  } else if (auth.role === 'teacher') {
+    if (!auth.staffId) {
+      return res.status(403).json({ error: 'Forbidden: Educator profile is not yet linked to an institutional staff record.' });
+    }
+    if (!clientStudentId) {
+      return res.status(400).json({ error: 'A target studentId is required for teacher recommendation requests.' });
+    }
+    targetStudentId = Number(clientStudentId);
+
+    // Verify teacher is assigned to student's class
+    const { data: targetStudent } = await supabaseAdmin
+      .from('students')
+      .select('class_grade')
+      .eq('student_id', targetStudentId)
+      .maybeSingle();
+
+    if (!targetStudent) {
+      return res.status(404).json({ error: 'Student record not found in institutional database.' });
+    }
+
+    const { data: assignments } = await supabaseAdmin
+      .from('faculty_class_assignments')
+      .select('class_id')
+      .eq('staff_id', auth.staffId);
+
+    const isAssigned = (assignments || []).some(
+      (a) => a.class_id === targetStudent.class_grade || a.class_id === 'All'
+    );
+    if (!isAssigned) {
+      return res.status(403).json({ error: 'Forbidden: You are not assigned to this student cohort.' });
+    }
+  } else if (auth.role === 'admin') {
+    if (!clientStudentId) {
+      return res.status(400).json({ error: 'A target studentId is required for recommendation requests.' });
+    }
+    targetStudentId = Number(clientStudentId);
+  } else {
+    return res.status(403).json({ error: 'Forbidden: Insufficient privileges to generate student recommendations.' });
+  }
+
+  // Fetch real student record from database
+  const { data: dbStudent, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('*')
+    .eq('student_id', targetStudentId)
+    .maybeSingle();
+
+  if (sErr || !dbStudent) {
+    return res.status(404).json({ error: 'Student record not found in institutional database.' });
+  }
+
+  // Fetch linked academic, attendance, and learning records from Supabase
+  const [perfRes, attRes, learnRes] = await Promise.all([
+    supabaseAdmin.from('academic_performance').select('*').eq('student_id', targetStudentId).maybeSingle(),
+    supabaseAdmin.from('student_attendance').select('*').eq('student_id', targetStudentId).maybeSingle(),
+    supabaseAdmin.from('learning_profile').select('*').eq('student_id', targetStudentId).maybeSingle(),
+  ]);
+
+  const customNotes = req.body.customNotes;
+
+  const student = {
+    Name: dbStudent.name,
+    Student_ID: dbStudent.student_id,
+    Class_Grade: dbStudent.class_grade || 'Grade 11-A',
+    Education_Level: 'Higher Secondary',
+    Attendance_Percent: attRes.data?.attendance_percentage ?? dbStudent.attendance_percent ?? 85,
+    Study_Hours_Per_Day: learnRes.data?.study_hours_per_day ?? dbStudent.study_hours_per_day ?? 3.5,
+    Overall_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
+    Exam_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
+    Quiz_Score: perfRes.data?.quiz_average ?? dbStudent.quiz_score ?? 75,
+    Assignment_Score: perfRes.data?.midterm_marks ?? dbStudent.assignment_score ?? 75,
+    Previous_Score: perfRes.data?.previous_gpa ? Math.round(perfRes.data.previous_gpa * 25) : (dbStudent.previous_score ?? 75),
+    Sleep_Hours: learnRes.data?.sleep_hours ?? dbStudent.sleep_hours ?? 7.0,
+    Stress_Level: dbStudent.stress_level || 'Medium',
+    Motivation_Level: learnRes.data?.motivation_level ?? dbStudent.motivation_level ?? 'Medium',
+    Learning_Style: learnRes.data?.learning_style ?? 'Visual',
+    Weak_Subject: dbStudent.weak_subject || 'Mathematics',
+    Tutoring: dbStudent.tutoring || 'No',
+    Risk_Level: dbStudent.risk_level || 'Low',
+  };
 
   const prompt = `
 You are VIDYA AI, an expert educational data scientist and master pedagogical advisor.
@@ -1736,7 +2602,7 @@ Return ONLY a valid JSON object with the following schema (no markdown, no backt
 
 // ================= VIDYA AI CHATBOT API (GEMINI INTEGRATION) =================
 app.post('/api/ai/chat', async (req, res) => {
-  const { message, history = [], userRole = 'guest', studentId, contextData = {} } = req.body;
+  const { message, history = [] } = req.body;
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message content is required' });
@@ -1745,23 +2611,55 @@ app.post('/api/ai/chat', async (req, res) => {
   const trimmedMessage = message.trim();
   const lowerMsg = trimmedMessage.toLowerCase();
 
-  // Find linked student if role is student
-  let currentStudent: StudentData | undefined;
+  // Authenticate and resolve caller role and profile strictly server-side
+  const auth = await verifyAnyCaller(req);
+  const userRole = auth.isAuthorized && auth.role ? auth.role : 'guest';
+  const supabaseAdmin = getSupabaseAdminClient();
+
+  let currentStudent: any = undefined;
+
   if (userRole === 'student') {
-    if (studentId) {
-      currentStudent = students.find((s) => s.Student_ID === studentId);
+    if (auth.studentId && supabaseAdmin) {
+      // Fetch only the authenticated student's record
+      const { data: dbStudent } = await supabaseAdmin
+        .from('students')
+        .select('*')
+        .eq('student_id', auth.studentId)
+        .maybeSingle();
+
+      if (dbStudent) {
+        const [perfRes, attRes, learnRes] = await Promise.all([
+          supabaseAdmin.from('academic_performance').select('*').eq('student_id', auth.studentId).maybeSingle(),
+          supabaseAdmin.from('student_attendance').select('*').eq('student_id', auth.studentId).maybeSingle(),
+          supabaseAdmin.from('learning_profile').select('*').eq('student_id', auth.studentId).maybeSingle(),
+        ]);
+
+        currentStudent = {
+          Name: dbStudent.name,
+          Student_ID: dbStudent.student_id,
+          Attendance_Percent: attRes.data?.attendance_percentage ?? dbStudent.attendance_percent ?? 85,
+          Overall_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
+          Exam_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
+          Quiz_Score: perfRes.data?.quiz_average ?? dbStudent.quiz_score ?? 75,
+          Assignment_Score: perfRes.data?.midterm_marks ?? dbStudent.assignment_score ?? 75,
+          Previous_Score: perfRes.data?.previous_gpa ? Math.round(perfRes.data.previous_gpa * 25) : (dbStudent.previous_score ?? 75),
+          Study_Hours_Per_Day: learnRes.data?.study_hours_per_day ?? dbStudent.study_hours_per_day ?? 3.5,
+          Sleep_Hours: learnRes.data?.sleep_hours ?? dbStudent.sleep_hours ?? 7.0,
+          Motivation_Level: learnRes.data?.motivation_level ?? dbStudent.motivation_level ?? 'Medium',
+          Learning_Style: learnRes.data?.learning_style ?? 'Visual',
+          Risk_Level: dbStudent.risk_level || 'Low',
+          Performance_Level: dbStudent.risk_level === 'High' ? 'Needs Improvement' : 'Satisfactory',
+          Weak_Subject: dbStudent.weak_subject || 'Mathematics',
+          Stress_Level: dbStudent.stress_level || 'Medium',
+          Tutoring: dbStudent.tutoring || 'No',
+          Extracurricular_Activity: 'Yes',
+        };
+      }
     }
-    if (!currentStudent && contextData.student) {
-      currentStudent = contextData.student as StudentData;
-    }
-    // Default to Saikiran if matching student 01
-    if (!currentStudent && students.length > 0) {
-      currentStudent = students[0];
-    }
+    // Note: If unmapped, currentStudent is intentionally left undefined. Never fall back to students[0].
   }
 
-  // PRIVACY & ACCESS CONTROL:
-  // If user is a student and is asking about someone else's data
+  // Cross-student privacy check: students may not ask about other students' records
   if (userRole === 'student') {
     const isAskingForOtherStudent =
       (lowerMsg.includes('other student') ||
@@ -1777,7 +2675,7 @@ app.post('/api/ai/chat', async (req, res) => {
 
     if (isAskingForOtherStudent) {
       return res.json({
-        reply: "I can only provide information about your own learning profile.",
+        reply: "I can only provide information about your own learning profile. In accordance with student privacy rules, other students' academic records cannot be accessed.",
         role: 'model',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       });
@@ -1806,7 +2704,7 @@ EDUCATIONAL SAFETY & TONE GUIDELINES:
 
   if (userRole === 'student' && currentStudent) {
     const subjectsList = currentStudent.Subjects?.map(
-      (s) => `${s.subject}: ${s.overall}%`
+      (s: SubjectScore) => `${s.subject}: ${s.overall}%`
     ).join(', ') || 'Mathematics: 82%, Science: 76%, English: 85%, Social Studies: 70%';
 
     systemInstruction += `
@@ -2282,7 +3180,8 @@ async function startServer() {
     app.use(express.static(distPath, { maxAge: '10m', index: false }));
     app.get('*', (req, res, next) => {
       // Never return the HTML SPA page for unknown /api/* endpoints
-      if (req.path.startsWith('/api') || req.path.includes('/api/') || req.originalUrl?.includes('/api')) {
+      const reqPath = req.path || '';
+      if (reqPath === '/api' || reqPath.startsWith('/api/')) {
         return res.status(404).json({ error: `Endpoint not found: ${req.method} ${req.originalUrl || req.path}` });
       }
       if (fs.existsSync(distIndexHtml)) {
@@ -2295,7 +3194,8 @@ async function startServer() {
     console.log('Initializing Vite in development middleware mode...');
     // Guard against Vite dev middleware ever serving HTML for any /api requests
     app.use((req, res, next) => {
-      if (req.url.startsWith('/api') || req.url.includes('/api/') || req.originalUrl?.includes('/api')) {
+      const cleanPath = (req.originalUrl || req.url || '').split('?')[0];
+      if (cleanPath === '/api' || cleanPath.startsWith('/api/')) {
         return res.status(404).json({ error: `Endpoint not found: ${req.method} ${req.originalUrl || req.url}` });
       }
       next();

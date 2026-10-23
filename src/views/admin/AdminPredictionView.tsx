@@ -393,21 +393,19 @@ export const AdminPredictionView: React.FC = () => {
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs flex flex-col justify-between">
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-              Stored Pipeline Model
+              Risk Assessment Engine
             </span>
             <div className="text-sm font-bold text-slate-900 mt-1 line-clamp-2 leading-snug">
               {loading ? (
                 <span className="inline-block w-24 h-5 bg-slate-200 rounded animate-pulse" />
-              ) : riskAnalysis.modelsList.length > 0 ? (
-                riskAnalysis.modelsList[0]
               ) : (
-                'Random Forest Pipeline'
+                'Vidya Risk Engine'
               )}
             </div>
           </div>
           <p className="text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span>Model Key:</span>
-            <span className="font-mono text-slate-700">prediction_model</span>
+            <span>Status:</span>
+            <span className="font-semibold text-emerald-600">Active</span>
           </p>
         </div>
 
@@ -523,14 +521,14 @@ export const AdminPredictionView: React.FC = () => {
         </div>
       </div>
 
-      {/* Pipeline Feature Weights Specification (Heuristic Catalog) */}
+      {/* Predictive Risk Indicators & Factor Weights */}
       <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs space-y-4">
         <div>
           <h3 className="text-base font-bold text-slate-900">
-            Heuristic Pipeline Feature Weights (Demo Specification)
+            Predictive Risk Indicators & Factor Weights
           </h3>
           <p className="text-xs text-slate-500">
-            Relative behavioral feature coefficients defined in the ingestion pipeline specification (not empirically trained SHAP outputs).
+            Relative behavioral, academic, and attendance factors evaluated for early student support and intervention.
           </p>
         </div>
 

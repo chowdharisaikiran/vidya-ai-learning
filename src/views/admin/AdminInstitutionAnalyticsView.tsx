@@ -17,10 +17,42 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
   const total = allStudents.length || 1;
 
   const avgScore =
-    Math.round((allStudents.reduce((a, b) => a + b.Overall_Score, 0) / total) * 10) / 10;
+    allStudents.length > 0
+      ? Math.round((allStudents.reduce((a, b) => a + b.Overall_Score, 0) / total) * 10) / 10
+      : 0;
   const avgAttendance =
-    Math.round((allStudents.reduce((a, b) => a + b.Attendance_Percent, 0) / total) * 10) / 10;
+    allStudents.length > 0
+      ? Math.round((allStudents.reduce((a, b) => a + b.Attendance_Percent, 0) / total) * 10) / 10
+      : 0;
   const highRiskCount = allStudents.filter((s) => s.Risk_Level === 'High').length;
+
+  // Passing scholars (score >= 50%)
+  const passingCount = allStudents.filter((s) => s.Overall_Score >= 50).length;
+  const passingRate = allStudents.length > 0 ? Math.round((passingCount / total) * 100) : 0;
+
+  // Weak subject breakdown calculated from live data
+  const weakSubjectCounts: Record<string, number> = {};
+  allStudents.forEach((s) => {
+    if (s.Weak_Subject) {
+      weakSubjectCounts[s.Weak_Subject] = (weakSubjectCounts[s.Weak_Subject] || 0) + 1;
+    }
+  });
+  const weakSubjectList = Object.entries(weakSubjectCounts)
+    .map(([subject, count]) => ({
+      subject,
+      count,
+      percent: Math.round((count / total) * 100),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const topWeak = weakSubjectList[0] || { subject: 'None recorded', count: 0, percent: 0 };
+
+  // Tutoring & Support distribution
+  const tutoredCount = allStudents.filter((s) => s.Tutoring === 'Yes').length;
+  const tutoredPercent = allStudents.length > 0 ? Math.round((tutoredCount / total) * 100) : 0;
+  const highParentSupport = allStudents.filter((s) => s.Parental_Support === 'High').length;
+  const medParentSupport = allStudents.filter((s) => s.Parental_Support === 'Medium').length;
+  const lowParentSupport = allStudents.filter((s) => s.Parental_Support === 'Low').length;
 
   const classes = Array.from(new Set(allStudents.map((s) => s.Class_Grade)));
   const classStats = classes.map((cls) => {
@@ -49,7 +81,7 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
             <span>Institution-Wide Academic Intelligence & Benchmarks</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Macro analysis of cohort health, curriculum retention, and comparative class grade trends.
+            Macro analysis of cohort health, verified passing rates, and comparative class grade trends.
           </p>
         </div>
       </div>
@@ -59,13 +91,13 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Composite GPA Metric</p>
           <p className="text-2xl font-black text-blue-600 font-mono mt-1">{avgScore}%</p>
-          <p className="text-[11px] text-slate-500 mt-0.5">Grade 11 STEM Cohort</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">Average across {allStudents.length} enrolled scholars</p>
         </div>
 
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overall Attendance</p>
           <p className="text-2xl font-black text-emerald-600 font-mono mt-1">{avgAttendance}%</p>
-          <p className="text-[11px] text-slate-500 mt-0.5">Compliant with accreditation</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">Verified database attendance average</p>
         </div>
 
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
@@ -73,13 +105,13 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
           <p className="text-2xl font-black text-rose-600 font-mono mt-1">
             {Math.round((highRiskCount / total) * 100)}% ({highRiskCount} scholars)
           </p>
-          <p className="text-[11px] text-slate-500 mt-0.5">Tier-1 remedial triggers</p>
+          <p className="text-[11px] text-slate-500 mt-0.5">High-risk tier needing intervention</p>
         </div>
 
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Curriculum Retention</p>
-          <p className="text-2xl font-black text-violet-600 font-mono mt-1">98.2%</p>
-          <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">Zero student dropouts</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Cohort Passing Rate</p>
+          <p className="text-2xl font-black text-violet-600 font-mono mt-1">{passingRate}%</p>
+          <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">{passingCount} of {allStudents.length} scholars &ge; 50% score</p>
         </div>
       </div>
 
@@ -88,7 +120,7 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
         <div>
           <h3 className="text-base font-bold text-slate-900">Comparative Cohort Breakdown (Class Streams)</h3>
           <p className="text-xs text-slate-500">
-            Monitoring equity and achievement distribution across Grade 11-A, 11-B, and 11-C.
+            Achievement distribution across active academic sections.
           </p>
         </div>
 
@@ -132,13 +164,13 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
         <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs space-y-3">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-emerald-600" />
-            <h3 className="text-base font-bold text-slate-900">Intervention Effectiveness Audit</h3>
+            <h3 className="text-base font-bold text-slate-900">Tutoring & Academic Support Audit</h3>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Data science tracking reveals that students who received personalized AI study timetables combined with 1-on-1 tutoring demonstrated an average <b>+11.8 percentage point increase</b> in subsequent examination results.
+            Live cohort records indicate that <b>{tutoredCount} scholars ({tutoredPercent}%)</b> are currently enrolled in supplementary tutoring. Parental support breakdown: <b>{highParentSupport} High</b>, <b>{medParentSupport} Medium</b>, and <b>{lowParentSupport} Low</b>.
           </p>
-          <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 text-xs text-emerald-900 font-medium">
-            ✓ 84.2% of flagged students successfully de-escalated from High Risk status within 60 days of early warning alert.
+          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+            Note: Longitudinal intervention gain metrics require multiple historical exam cycles to establish verified statistical attribution.
           </div>
         </div>
 
@@ -148,10 +180,10 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
             <h3 className="text-base font-bold text-slate-900">Curriculum Strategy Directives</h3>
           </div>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Physics and Mathematics account for <b>68%</b> of all academic friction across the cohort. The Dean recommends launching mandatory Friday problem-solving workshops and expanding peer mentoring programs.
+            <b>{topWeak.subject}</b> represents the primary academic bottleneck in the cohort, flagged as the weakest subject for <b>{topWeak.count} students ({topWeak.percent}%)</b>. Recommended institutional focus: targeted concept review sessions and structured peer study circles.
           </p>
           <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 text-xs text-indigo-900 font-medium">
-            ✓ Automated syllabus synchronization active across all 4 departments.
+            Active curriculum review recommended for top friction subject: {topWeak.subject}.
           </div>
         </div>
       </div>

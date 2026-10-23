@@ -117,15 +117,17 @@ export const TeacherProfileView: React.FC = () => {
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Staff Attendance</p>
           <p className="text-2xl font-black text-emerald-600 font-mono mt-1">
-            {staffRecord?.overall_attendance_percentage ? `${staffRecord.overall_attendance_percentage}%` : '85%'}
+            {staffRecord?.overall_attendance_percentage !== undefined && staffRecord?.overall_attendance_percentage !== null
+              ? `${staffRecord.overall_attendance_percentage}%`
+              : 'Not recorded'}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">Logged attendance benchmark</p>
         </div>
 
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Attendance Status</p>
-          <p className="text-2xl font-black text-blue-600 font-mono mt-1">
-            {staffRecord?.attendance_status || 'Good'}
+          <p className="text-xl font-bold text-blue-600 font-mono mt-1">
+            {staffRecord?.attendance_status || 'Not available'}
           </p>
           <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">Faculty status in institutional register</p>
         </div>
@@ -133,7 +135,7 @@ export const TeacherProfileView: React.FC = () => {
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Assigned Subject</p>
           <p className="text-lg font-bold text-slate-900 mt-1 truncate">
-            {staffRecord?.subject || 'STEM & Computing'}
+            {staffRecord?.subject || 'Unassigned Subject'}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">Primary academic specialization</p>
         </div>

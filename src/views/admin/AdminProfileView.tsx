@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import {
   User,
   Shield,
+  ShieldCheck,
   Building,
   Mail,
   Server,
@@ -193,21 +194,14 @@ export const AdminProfileView: React.FC = () => {
       {/* Audit Log */}
       <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs space-y-3">
         <h3 className="text-base font-bold text-slate-900">Security & Administrative Audit Log</h3>
-        <p className="text-xs text-slate-500">Chronological history of platform activities.</p>
+        <p className="text-xs text-slate-500">Real-time chronicle of platform administrative events.</p>
 
-        <div className="space-y-2 text-xs">
-          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-            <span className="text-slate-700">Automated risk recalculation completed for Grade 11 STEM</span>
-            <span className="text-slate-400 font-mono text-[10px]">Today, 08:30 AM</span>
-          </div>
-          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-            <span className="text-slate-700">Early warning SMS dispatch triggered for 2 at-risk scholars</span>
-            <span className="text-slate-400 font-mono text-[10px]">Yesterday, 04:15 PM</span>
-          </div>
-          <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-            <span className="text-slate-700">Dataset schema verification passed with 0 missing attributes</span>
-            <span className="text-slate-400 font-mono text-[10px]">Feb 16, 11:20 AM</span>
-          </div>
+        <div className="py-8 px-4 rounded-2xl bg-slate-50/70 border border-slate-200/70 text-center space-y-1">
+          <ShieldCheck className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+          <p className="text-xs font-semibold text-slate-700">No Security Events Logged</p>
+          <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+            All administrative sessions and database health probes are operating normally with zero security alerts.
+          </p>
         </div>
       </div>
 

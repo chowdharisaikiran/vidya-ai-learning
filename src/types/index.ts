@@ -156,3 +156,21 @@ export interface AIRecommendationPlan {
   }[];
   pedagogicalTip: string;
 }
+
+export interface CandidateStudent {
+  student_id: number;
+  name: string;
+  age: number;
+  gender: string;
+  email: string | null;
+  class_grade: string | null;
+  current_gpa: number | null;
+  risk_level: string | null;
+  attendance_percent: number | null;
+  isMapped: boolean;
+  mappedUser: {
+    id: string;
+    email: string;
+    fullName: string;
+  } | null;
+}

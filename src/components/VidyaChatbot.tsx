@@ -18,7 +18,7 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getSupabaseConfig, getSupabaseClient } from '../lib/supabase';
+import { getSupabaseConfig, getSupabaseClient, getActiveAuthToken } from '../lib/supabase';
 import { apiUrl, parseApiResponse } from '../lib/apiConfig';
 
 export interface ChatMessage {
@@ -128,18 +128,20 @@ export const VidyaChatbot: React.FC = () => {
         content: m.content,
       }));
 
+      const token = await getActiveAuthToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(apiUrl('/api/ai/chat'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           message: text,
           history: historyPayload,
-          userRole: role || 'guest',
-          studentId: student?.Student_ID,
-          contextData: {
-            userName,
-            student: student || null,
-          },
         }),
       });
 
@@ -159,22 +161,6 @@ export const VidyaChatbot: React.FC = () => {
       };
 
       setMessages((prev) => [...prev, aiMessageItem]);
-
-      // If Supabase is connected, optionally record message (non-blocking)
-      try {
-        const client = getSupabaseClient();
-        if (client && user) {
-          Promise.resolve(
-            client.from('chat_messages').insert({
-              user_id: user.id || 'anonymous',
-              role: 'user',
-              message: text,
-            })
-          ).catch(() => {});
-        }
-      } catch {
-        // Ignore table absence
-      }
     } catch (err) {
       console.warn('VIDYA Chat error:', err);
       setMessages((prev) => [

@@ -14,24 +14,78 @@ import {
   Lightbulb,
   HeartHandshake,
   Check,
+  ShieldCheck,
+  Database,
+  Info,
 } from 'lucide-react';
 import { UnlinkedStudentCard } from '../../components/common/UnlinkedStudentCard';
 import { apiUrl, parseApiResponse } from '../../lib/apiConfig';
+import {
+  fetchStudentLinkedRecords,
+  getActiveAuthToken,
+  DatabaseRecommendationRow,
+} from '../../services/vidyaDatabaseService';
 
 export const StudentRecommendationsView: React.FC = () => {
   const { student, user } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [dbLoading, setDbLoading] = useState(false);
   const [plan, setPlan] = useState<AIRecommendationPlan | null>(null);
-  const [completedDays, setCompletedDays] = useState<string[]>(['Monday']);
+  const [dbRecommendations, setDbRecommendations] = useState<DatabaseRecommendationRow[]>([]);
+
+  // Key completion states to user.id in localStorage (live public.recommendations has no completion column)
+  const [completedDays, setCompletedDays] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(`vidya_completed_days_${user?.id}`);
+      return saved ? JSON.parse(saved) : ['Monday'];
+    } catch {
+      return ['Monday'];
+    }
+  });
+
+  const [completedRecIds, setCompletedRecIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(`vidya_completed_recs_${user?.id}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const loadDatabaseRecommendations = async () => {
+    if (!student?.Student_ID) return;
+    setDbLoading(true);
+    try {
+      const records = await fetchStudentLinkedRecords(student.Student_ID);
+      if (records && records.recommendations) {
+        setDbRecommendations(records.recommendations);
+      }
+    } catch (err) {
+      console.warn('Failed to load DB recommendations:', err);
+    } finally {
+      setDbLoading(false);
+    }
+  };
 
   const fetchAIRecommendations = async () => {
     if (!student) return;
     setLoading(true);
     try {
+      const token = await getActiveAuthToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(apiUrl('/api/ai/recommendations'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ student }),
+        headers,
+        body: JSON.stringify({
+          studentId: student.Student_ID,
+          student,
+        }),
       });
       const parsed = await parseApiResponse<AIRecommendationPlan>(res, '/api/ai/recommendations');
       if (parsed.ok && parsed.data) {
@@ -45,20 +99,42 @@ export const StudentRecommendationsView: React.FC = () => {
   };
 
   useEffect(() => {
+    loadDatabaseRecommendations();
     fetchAIRecommendations();
   }, [student?.Student_ID]);
+
+  const toggleDayComplete = (day: string) => {
+    const updated = completedDays.includes(day)
+      ? completedDays.filter((d) => d !== day)
+      : [...completedDays, day];
+    setCompletedDays(updated);
+    if (user?.id) {
+      try {
+        localStorage.setItem(`vidya_completed_days_${user.id}`, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const toggleRecComplete = (id: string | number) => {
+    const strId = String(id);
+    const updated = completedRecIds.includes(strId)
+      ? completedRecIds.filter((d) => d !== strId)
+      : [...completedRecIds, strId];
+    setCompletedRecIds(updated);
+    if (user?.id) {
+      try {
+        localStorage.setItem(`vidya_completed_recs_${user.id}`, JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+    }
+  };
 
   if (!user?.studentId || !student) {
     return <UnlinkedStudentCard title="Pedagogical Directives & AI Study Plan" />;
   }
-
-  const toggleDayComplete = (day: string) => {
-    if (completedDays.includes(day)) {
-      setCompletedDays(completedDays.filter((d) => d !== day));
-    } else {
-      setCompletedDays([...completedDays, day]);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -119,6 +195,86 @@ export const StudentRecommendationsView: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Official Institutional Recommendations from public.recommendations */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-600" />
+              <span>Official Institutional Directives</span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                public.recommendations ({dbRecommendations.length})
+              </span>
+            </h3>
+            <p className="text-xs text-slate-500 font-normal mt-0.5">
+              Directives issued by faculty. Check off actions locally as completed.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium font-mono text-slate-700 bg-slate-100 px-3 py-1 rounded-lg border border-slate-200/60">
+              {completedRecIds.length} / {dbRecommendations.length || 0} Complete
+            </span>
+          </div>
+        </div>
+
+        {dbLoading ? (
+          <div className="py-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+            <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
+            <span>Loading institutional directives from Supabase...</span>
+          </div>
+        ) : dbRecommendations.length === 0 ? (
+          <div className="py-6 px-4 rounded-2xl bg-slate-50 border border-slate-200/60 text-center text-xs text-slate-500">
+            No institutional advisory directives currently logged for student #{student.Student_ID}.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {dbRecommendations.map((rec) => {
+              const isDone = completedRecIds.includes(String(rec.recommendation_id));
+              const priorityColor =
+                rec.priority === 'High'
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : rec.priority === 'Medium'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200';
+
+              return (
+                <div
+                  key={rec.recommendation_id}
+                  onClick={() => toggleRecComplete(rec.recommendation_id)}
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-start justify-between gap-4 ${
+                    isDone
+                      ? 'bg-emerald-50/50 border-emerald-300'
+                      : 'bg-slate-50/60 border-slate-200/80 hover:bg-white hover:border-slate-300'
+                  }`}
+                >
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-slate-900">{rec.focus_area}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${priorityColor}`}>
+                        {rec.priority} Priority
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">#{rec.recommendation_id}</span>
+                    </div>
+                    <p className="text-xs text-slate-700 font-medium">{rec.recommended_action}</p>
+                    {rec.reason && (
+                      <p className="text-[11px] text-slate-500 italic">Rationale: {rec.reason}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className={`w-6 h-6 rounded-lg flex items-center justify-center transition-colors shrink-0 mt-1 ${
+                      isDone ? 'bg-emerald-600 text-white' : 'border border-slate-300 text-transparent bg-white'
+                    }`}
+                  >
+                    <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Weekly 7-Day Personalized Timetable */}

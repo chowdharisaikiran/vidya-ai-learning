@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { UserProfileRow, UserRole } from '../../types';
+import { UserProfileRow, UserRole, CandidateStudent } from '../../types';
 import {
   fetchAllDatabaseStudents,
   fetchAllStaffRecords,
+  getActiveAuthToken,
   DatabaseStudentRow,
   DatabaseStaffRow,
 } from '../../services/vidyaDatabaseService';
@@ -19,6 +20,7 @@ import {
   Clock,
   CheckCircle2,
   AlertTriangle,
+  AlertCircle,
   RefreshCw,
   Edit2,
   X,
@@ -27,6 +29,7 @@ import {
   Database,
   Lock,
   UserX,
+  UserMinus,
   Check,
   Info,
   Server,
@@ -40,7 +43,13 @@ import {
 } from 'lucide-react';
 
 export const AdminUserRolesView: React.FC = () => {
-  const { fetchAllUserProfiles, updateUserRoleAndMapping, user: currentAdmin } = useAuth();
+  const {
+    fetchAllUserProfiles,
+    updateUserRoleAndMapping,
+    unlinkStudentAccount,
+    searchAdminStudents,
+    user: currentAdmin,
+  } = useAuth();
 
   const [profiles, setProfiles] = useState<UserProfileRow[]>([]);
   const [students, setStudents] = useState<DatabaseStudentRow[]>([]);
@@ -71,14 +80,50 @@ export const AdminUserRolesView: React.FC = () => {
   const [confirmingMapping, setConfirmingMapping] = useState<boolean>(false);
   const [saving, setSaving] = useState(false);
 
+  // Real-Student Candidate Search & Conflict Resolution States
+  const [candidateStudents, setCandidateStudents] = useState<CandidateStudent[]>([]);
+  const [searchingCandidates, setSearchingCandidates] = useState(false);
+  const [conflictModalData, setConflictModalData] = useState<{
+    conflictingUser: { id: string; email: string; fullName: string };
+    student: any;
+    message: string;
+  } | null>(null);
+  const [unlinkingUserId, setUnlinkingUserId] = useState<string | null>(null);
+
   // Migration SQL Modal
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
+  // Live Candidate Search Query Hook
+  useEffect(() => {
+    if (editingUser && newRole === 'student') {
+      let active = true;
+      setSearchingCandidates(true);
+      const timer = setTimeout(async () => {
+        const res = await searchAdminStudents(studentSearch);
+        if (active) {
+          if (res.success) {
+            setCandidateStudents(res.students);
+          }
+          setSearchingCandidates(false);
+        }
+      }, 250);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }
+  }, [editingUser, newRole, studentSearch]);
+
   // Check server configuration status
   const checkServerConfig = async () => {
     try {
-      const res = await fetch(apiUrl('/api/admin/config-status'));
+      const token = await getActiveAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(apiUrl('/api/admin/config-status'), { headers });
       const parsed = await parseApiResponse<{ configured: boolean; message?: string }>(res, '/api/admin/config-status');
       if (parsed.ok && parsed.data) {
         setServerStatus({ configured: parsed.data.configured, message: parsed.data.message || '' });
@@ -149,6 +194,7 @@ export const AdminUserRolesView: React.FC = () => {
   const handleOpenEdit = (profile: UserProfileRow) => {
     setEditingUser(profile);
     setConfirmingMapping(false);
+    setConflictModalData(null);
     setNewRole(profile.role);
     setSelectedStudentId(profile.student_id !== undefined && profile.student_id !== null ? profile.student_id : '');
     setSelectedStaffId(profile.staff_id || '');
@@ -162,6 +208,7 @@ export const AdminUserRolesView: React.FC = () => {
   const handleRoleChange = (role: UserRole) => {
     setNewRole(role);
     setConfirmingMapping(false);
+    setConflictModalData(null);
     if (role === 'student') {
       setSelectedStaffId(''); // Clear staff mapping
     } else if (role === 'teacher') {
@@ -172,7 +219,7 @@ export const AdminUserRolesView: React.FC = () => {
     }
   };
 
-  const handleSaveRole = async () => {
+  const handleSaveRole = async (overrideConflict = false) => {
     if (!editingUser) return;
     setSaving(true);
     setError(null);
@@ -188,9 +235,19 @@ export const AdminUserRolesView: React.FC = () => {
       editingUser.id,
       newRole,
       targetStudentId,
-      targetStaffId
+      targetStaffId,
+      overrideConflict
     );
     setSaving(false);
+
+    if (res.isConflict && res.conflictingUser) {
+      setConflictModalData({
+        conflictingUser: res.conflictingUser,
+        student: activeSelectedStudent,
+        message: res.error || 'This student record is already mapped to another user account.',
+      });
+      return;
+    }
 
     if (res.success) {
       const mappingSummary =
@@ -205,6 +262,7 @@ export const AdminUserRolesView: React.FC = () => {
       );
       setEditingUser(null);
       setConfirmingMapping(false);
+      setConflictModalData(null);
       await loadData();
     } else {
       if (res.isSetupError) {
@@ -212,6 +270,28 @@ export const AdminUserRolesView: React.FC = () => {
       } else {
         setError(res.error || 'Failed to update user role and dataset mapping.');
       }
+    }
+  };
+
+  const handleConfirmConflictResolution = async () => {
+    if (!editingUser || !conflictModalData) return;
+    await handleSaveRole(true);
+  };
+
+  const handleUnlinkStudent = async (profile: UserProfileRow) => {
+    setUnlinkingUserId(profile.id);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await unlinkStudentAccount(profile.id);
+      if (res.success) {
+        setSuccessMessage(`Account ${profile.email} unlinked successfully (student_id set to NULL).`);
+        await loadData();
+      } else {
+        setError(res.error || 'Failed to unlink student account.');
+      }
+    } finally {
+      setUnlinkingUserId(null);
     }
   };
 
@@ -726,13 +806,27 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => handleOpenEdit(p)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 transition-colors cursor-pointer"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Assign Role &amp; Mapping</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {p.role === 'student' && p.student_id && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnlinkStudent(p)}
+                              disabled={unlinkingUserId === p.id}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-rose-700 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Unlink this student record (sets student_id to NULL)"
+                            >
+                              <UserMinus className="w-3 h-3 text-rose-600" />
+                              <span>{unlinkingUserId === p.id ? 'Unlinking...' : 'Unlink'}</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleOpenEdit(p)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 transition-colors cursor-pointer"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Assign Role &amp; Mapping</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -816,10 +910,34 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                   
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                     <span className="text-slate-600 font-medium">Institutional Role:</span>
-                    <span className="font-bold uppercase text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-                      {newRole}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {newRole !== editingUser.role ? (
+                        <>
+                          <span className="line-through text-slate-400 text-xs uppercase">{editingUser.role}</span>
+                          <span className="font-bold text-xs text-amber-600">→</span>
+                          <span className="font-bold uppercase text-xs px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                            {newRole} (Modified)
+                          </span>
+                        </>
+                      ) : (
+                        <span className="font-bold uppercase text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {newRole} (Preserved)
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  {newRole !== editingUser.role && (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Role Modification Warning:</strong>
+                        <p className="mt-0.5 leading-relaxed">
+                          You are explicitly modifying this user&apos;s role from <span className="font-bold uppercase">{editingUser.role}</span> to <span className="font-bold uppercase">{newRole}</span>. Any prior incompatible dataset mappings will be cleared.
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {newRole === 'student' && (
                     <div className="space-y-2">
@@ -953,58 +1071,175 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
 
                 {/* Conditional Dataset Link: Student (Requirement 4, 6, 7) */}
                 {newRole === 'student' && (
-                  <div className="space-y-2 p-3.5 rounded-2xl bg-blue-50/40 border border-blue-100">
+                  <div className="space-y-3 p-3.5 rounded-2xl bg-blue-50/40 border border-blue-100">
                     <div className="flex items-center justify-between">
                       <label className="font-bold text-slate-900 flex items-center gap-1.5">
                         <GraduationCap className="w-4 h-4 text-blue-600" />
-                        <span>2. Map to public.students (student_id)</span>
+                        <span>2. Link Institutional Student Record (public.students)</span>
                       </label>
                       <span className="text-[10px] text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded font-semibold">
-                        {students.length} Records Loaded
+                        {students.length} Total Records
                       </span>
                     </div>
 
                     <p className="text-[11px] text-slate-600 leading-relaxed">
-                      Select an explicit student record. Real records load live from <code>public.students</code> (with name, age, gender).
+                      Search and select a verified student candidate. An account must be explicitly verified and confirmed before access to protected grades and attendance is granted.
                     </p>
 
-                    {/* Student Search Filter */}
+                    {/* Live Candidate Search Input */}
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                       <input
                         type="text"
-                        placeholder="Search students by name, ID, or gender..."
+                        placeholder="Search candidates by name, Student ID (e.g. 1001), or class..."
                         value={studentSearch}
                         onChange={(e) => setStudentSearch(e.target.value)}
-                        className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full pl-8 pr-8 py-2 text-xs rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 placeholder:text-slate-400"
                       />
+                      {searchingCandidates && (
+                        <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                      )}
                     </div>
 
-                    <select
-                      value={selectedStudentId}
-                      onChange={(e) => setSelectedStudentId(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                    >
-                      <option value="">-- None / Unmapped (NULL) --</option>
-                      {filteredStudents.map((s) => (
-                        <option key={s.student_id} value={s.student_id}>
-                          #{s.student_id} - {s.name} ({s.age} yrs, {s.gender})
-                        </option>
-                      ))}
-                    </select>
+                    {/* Candidate Selection List (Scrollable) */}
+                    <div className="max-h-52 overflow-y-auto space-y-1.5 rounded-xl border border-slate-200 bg-white p-2">
+                      {/* Unmapped Option */}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStudentId('')}
+                        className={`w-full text-left p-2 rounded-lg border text-xs transition-all flex items-center justify-between cursor-pointer ${
+                          selectedStudentId === ''
+                            ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-400 text-blue-900'
+                            : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <UserX className="w-4 h-4 text-slate-400" />
+                          <span className="font-semibold">Unmapped / No Student Record (NULL)</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">student_id: NULL</span>
+                      </button>
 
-                    {/* Selected Student Preview */}
+                      {/* Candidate Student Cards */}
+                      {candidateStudents.length > 0 ? (
+                        candidateStudents.map((cand) => {
+                          const isSelected = selectedStudentId === cand.student_id;
+                          const isMappedToOther = cand.isMapped && cand.mappedUser && cand.mappedUser.id !== editingUser.id;
+                          const isMappedToSelf = cand.isMapped && cand.mappedUser && cand.mappedUser.id === editingUser.id;
+
+                          return (
+                            <button
+                              key={cand.student_id}
+                              type="button"
+                              onClick={() => setSelectedStudentId(cand.student_id)}
+                              className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all cursor-pointer space-y-1 ${
+                                isSelected
+                                  ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-300 shadow-xs'
+                                  : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-900">{cand.name}</span>
+                                  <span className="font-mono text-[11px] font-semibold text-blue-700 bg-blue-100/60 px-1.5 py-0.2 rounded">
+                                    #{cand.student_id}
+                                  </span>
+                                </div>
+
+                                {/* Mapping Status Badge */}
+                                {isMappedToOther ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                                    <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                    <span>Conflict: Linked</span>
+                                  </span>
+                                ) : isMappedToSelf ? (
+                                  <span className="text-[10px] font-bold text-blue-700 bg-blue-100/70 px-2 py-0.5 rounded-full">
+                                    Currently Linked
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                    Available
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                                <span>Grade: <strong className="text-slate-700">{cand.class_grade || 'Unassigned'}</strong></span>
+                                <span>Age: <strong className="text-slate-700">{cand.age}</strong> ({cand.gender})</span>
+                                {cand.current_gpa !== null && (
+                                  <span>GPA: <strong className="text-slate-700">{cand.current_gpa}</strong></span>
+                                )}
+                                {cand.risk_level && (
+                                  <span className={`font-semibold capitalize ${
+                                    cand.risk_level.toLowerCase() === 'high' ? 'text-rose-600' :
+                                    cand.risk_level.toLowerCase() === 'moderate' ? 'text-amber-600' : 'text-emerald-600'
+                                  }`}>
+                                    {cand.risk_level} Risk
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Show conflicting account detail */}
+                              {isMappedToOther && cand.mappedUser && (
+                                <p className="text-[10px] text-amber-700 font-medium pt-1 border-t border-amber-100">
+                                  Currently linked to {cand.mappedUser.fullName} ({cand.mappedUser.email})
+                                </p>
+                              )}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        filteredStudents.map((s) => {
+                          const isSelected = selectedStudentId === s.student_id;
+                          return (
+                            <button
+                              key={s.student_id}
+                              type="button"
+                              onClick={() => setSelectedStudentId(s.student_id)}
+                              className={`w-full text-left p-2 rounded-lg border text-xs transition-all flex items-center justify-between cursor-pointer ${
+                                isSelected
+                                  ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400'
+                                  : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-800'
+                              }`}
+                            >
+                              <span className="font-semibold">#{s.student_id} - {s.name} ({s.age} yrs, {s.gender})</span>
+                              <span className="font-mono text-[10px] text-blue-600">Select</span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Selected Student Candidate Details Card */}
                     {activeSelectedStudent && (
-                      <div className="p-2.5 rounded-xl bg-white border border-blue-200 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="font-bold text-slate-900 block">{activeSelectedStudent.name}</span>
-                          <span className="text-[11px] text-slate-500">
-                            Age: {activeSelectedStudent.age} · Gender: {activeSelectedStudent.gender}
+                      <div className="p-3 rounded-2xl bg-white border border-blue-200 shadow-2xs space-y-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-blue-700 tracking-wider">Candidate Selected for Linking</span>
+                            <h4 className="font-bold text-slate-900 text-sm">{activeSelectedStudent.name}</h4>
+                          </div>
+                          <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200 text-xs">
+                            student_id: #{activeSelectedStudent.student_id}
                           </span>
                         </div>
-                        <span className="font-mono text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                          student_id: #{activeSelectedStudent.student_id}
-                        </span>
+
+                        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                          <div>Age: <strong className="text-slate-800">{activeSelectedStudent.age} yrs</strong></div>
+                          <div>Gender: <strong className="text-slate-800">{activeSelectedStudent.gender}</strong></div>
+                        </div>
+
+                        {/* Check Conflict with existing user */}
+                        {profiles.some((p) => p.student_id === activeSelectedStudent.student_id && p.id !== editingUser.id) && (
+                          <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                            <div>
+                              <strong className="block">Mapping Collision Alert</strong>
+                              <span>
+                                This student record is already linked to another registered account. Submitting will require administrator conflict confirmation.
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1099,7 +1334,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                   </button>
                   <button
                     type="button"
-                    onClick={handleSaveRole}
+                    onClick={() => handleSaveRole(false)}
                     disabled={saving}
                     className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-60"
                   >
@@ -1138,6 +1373,71 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Explicit Administrator Conflict Resolution Modal (Requirement 5) */}
+      {conflictModalData && editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-amber-300 space-y-4 animate-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center border border-amber-200 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Resolve Mapping Collision</h3>
+                <p className="text-xs text-slate-500">Explicit Administrator Confirmation Required</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-2">
+              <p className="font-semibold text-amber-950">
+                {conflictModalData.message}
+              </p>
+              <div className="bg-white/80 p-2.5 rounded-xl border border-amber-200 text-[11px] space-y-1 text-slate-700">
+                <div className="flex justify-between">
+                  <span>Currently Mapped User:</span>
+                  <strong className="text-slate-900">{conflictModalData.conflictingUser.fullName}</strong>
+                </div>
+                <div className="flex justify-between font-mono text-[10px]">
+                  <span>Email:</span>
+                  <span className="text-slate-600">{conflictModalData.conflictingUser.email}</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                If you confirm reassignment, the student record will be detached from <strong>{conflictModalData.conflictingUser.email}</strong> (their student mapping will be set to NULL) and assigned to <strong>{editingUser.email}</strong>.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConflictModalData(null)}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel &amp; Keep Existing
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmConflictResolution}
+                disabled={saving}
+                className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {saving ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Reassigning...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Confirm &amp; Reassign Student Record</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

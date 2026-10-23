@@ -163,7 +163,35 @@ export async function fetchStudentLinkedRecords(
       null;
 
     const studentRow = (studentRes.data && studentRes.data[0] as DatabaseStudentRow) || null;
-    const perfRow = (perfRes.data && perfRes.data[0] as DatabaseAcademicPerformanceRow) || null;
+    let perfRow = (perfRes.data && perfRes.data[0] as DatabaseAcademicPerformanceRow) || null;
+
+    // If direct PostgREST client query returned no academic record, query authenticated student endpoint
+    if (!perfRow) {
+      try {
+        const token = await getActiveAuthToken();
+        if (token) {
+          const res = await fetch(apiUrl('/api/student/academic-performance'), {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const parsed = await parseApiResponse<{
+            success: boolean;
+            isLinked: boolean;
+            student_id?: number | null;
+            performance?: DatabaseAcademicPerformanceRow | null;
+          }>(res, '/api/student/academic-performance');
+
+          if (parsed.ok && parsed.data?.success && parsed.data.performance) {
+            perfRow = parsed.data.performance;
+          }
+        }
+      } catch (endpointErr) {
+        // Fall back gracefully; preserve empty / loading / unlinked state
+      }
+    }
+
     const attRow = (attRes.data && attRes.data[0] as DatabaseStudentAttendanceRow) || null;
     const learningRow = (learningRes.data && learningRes.data[0] as DatabaseLearningProfileRow) || null;
 

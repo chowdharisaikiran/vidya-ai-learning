@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { StudentData, UserAccount, UserRole, UserProfileRow } from '../types';
+import { StudentData, UserAccount, UserRole, UserProfileRow, CandidateStudent } from '../types';
 import { INITIAL_STUDENTS, INITIAL_USERS } from '../data/mockData';
 import {
   testSupabaseConnection,
@@ -31,8 +31,17 @@ interface AuthContextType {
     targetUserId: string,
     newRole: UserRole,
     studentId?: number | null,
-    staffId?: string | null
-  ) => Promise<{ success: boolean; error?: string; isSetupError?: boolean }>;
+    staffId?: string | null,
+    overrideExisting?: boolean
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+    isConflict?: boolean;
+    conflictingUser?: { id: string; email: string; fullName: string };
+    isSetupError?: boolean;
+  }>;
+  unlinkStudentAccount: (targetUserId: string) => Promise<{ success: boolean; error?: string }>;
+  searchAdminStudents: (query?: string) => Promise<{ success: boolean; students: CandidateStudent[]; error?: string }>;
   login: (username: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   signUp: (
     fullName: string,
@@ -325,8 +334,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     targetUserId: string,
     newRole: UserRole,
     studentId?: number | null,
-    staffId?: string | null
-  ): Promise<{ success: boolean; error?: string; isSetupError?: boolean }> => {
+    staffId?: string | null,
+    overrideExisting?: boolean
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    isConflict?: boolean;
+    conflictingUser?: { id: string; email: string; fullName: string };
+    isSetupError?: boolean;
+  }> => {
     if (user?.role !== 'admin') {
       return { success: false, error: 'Unauthorized: Only institutional administrators can manage user roles.' };
     }
@@ -350,18 +366,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: newRole,
           studentId: studentId ?? null,
           staffId: staffId ?? null,
+          overrideExisting: Boolean(overrideExisting),
         }),
       });
 
-      const parsed = await parseApiResponse<{ success: boolean; isSetupError?: boolean }>(
-        res,
-        'POST /api/admin/users/:id/role-mapping'
-      );
+      const parsed = await parseApiResponse<{
+        success: boolean;
+        isConflict?: boolean;
+        conflictingUser?: { id: string; email: string; fullName: string };
+        isSetupError?: boolean;
+      }>(res, 'POST /api/admin/users/:id/role-mapping');
 
       if (!parsed.ok || !parsed.data?.success) {
         return {
           success: false,
           error: parsed.error || `Server update failed with status ${res.status}.`,
+          isConflict: res.status === 409 || Boolean(parsed.data?.isConflict),
+          conflictingUser: parsed.data?.conflictingUser,
           isSetupError: res.status === 503 || Boolean(parsed.data?.isSetupError),
         };
       }
@@ -384,6 +405,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Failed to update user role via secure server endpoint.' };
+    }
+  };
+
+  const unlinkStudentAccount = async (targetUserId: string): Promise<{ success: boolean; error?: string }> => {
+    if (user?.role !== 'admin') {
+      return { success: false, error: 'Unauthorized: Only institutional administrators can unlink student accounts.' };
+    }
+
+    try {
+      const token = await getActiveAuthToken();
+      if (!token) {
+        return { success: false, error: 'Authentication error: No active administrator session token found.' };
+      }
+
+      const res = await fetch(apiUrl(`/api/admin/users/${targetUserId}/unlink-student`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const parsed = await parseApiResponse<{ success: boolean }>(res, 'POST /api/admin/users/:id/unlink-student');
+      if (!parsed.ok || !parsed.data?.success) {
+        return { success: false, error: parsed.error || 'Failed to unlink student account on server.' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Network error unlinking student account.' };
+    }
+  };
+
+  const searchAdminStudents = async (
+    query = ''
+  ): Promise<{ success: boolean; students: CandidateStudent[]; error?: string }> => {
+    try {
+      const token = await getActiveAuthToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const params = new URLSearchParams();
+      if (query.trim()) params.set('q', query.trim());
+      params.set('limit', '50');
+
+      const url = apiUrl(`/api/admin/students/search?${params.toString()}`);
+      const res = await fetch(url, { headers });
+      const parsed = await parseApiResponse<{ success: boolean; students: CandidateStudent[] }>(
+        res,
+        '/api/admin/students/search'
+      );
+
+      if (!parsed.ok || !parsed.data) {
+        return { success: false, students: [], error: parsed.error || `Error searching students (${res.status})` };
+      }
+
+      return { success: true, students: parsed.data.students || [] };
+    } catch (err: any) {
+      return { success: false, students: [], error: err?.message || 'Network error searching students.' };
     }
   };
 
@@ -476,84 +558,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check whether email confirmation is required by project settings
       const needsConfirmation = !data.session || (authUser.identities && authUser.identities.length === 0);
 
-      const studentId = 'STU-' + authUser.id.replace(/-/g, '').slice(0, 4).toUpperCase();
+      // Real-student onboarding: Newly registered accounts have studentId: null (unmapped)
+      // until an authorized administrator explicitly links their account to an existing verified student record.
       const account: UserAccount = {
         id: authUser.id,
         username: cleanEmail.split('@')[0],
         email: cleanEmail,
         name: cleanName,
         role: 'student',
-        studentId,
+        studentId: null,
       };
 
       // If session is active immediately (e.g. email confirmation off or auto-confirmed)
       if (data.session) {
-        let confirmedRole: UserRole = 'pending';
+        let confirmedRole: UserRole = 'student';
         try {
           await client.from('user_profiles').upsert({
             id: authUser.id,
             full_name: cleanName,
             email: cleanEmail,
             role: 'student',
+            student_id: null,
             updated_at: new Date().toISOString(),
           });
 
-          const { data: prof } = await client.from('user_profiles').select('role').eq('id', authUser.id).maybeSingle();
+          const { data: prof } = await client.from('user_profiles').select('role, student_id').eq('id', authUser.id).maybeSingle();
           if (prof?.role === 'student' || prof?.role === 'teacher' || prof?.role === 'admin') {
             confirmedRole = prof.role;
           }
+          if (prof?.student_id) {
+            account.studentId = prof.student_id;
+          }
         } catch (profileErr) {
           console.warn('Profile sync note:', profileErr);
-          confirmedRole = 'pending';
         }
 
         account.role = confirmedRole;
-
-        if (confirmedRole === 'student') {
-          // Add corresponding student analytics record to local state
-          const newStudentRecord: StudentData = {
-            Student_ID: studentId,
-            Name: cleanName,
-            Email: cleanEmail,
-            Age: 17,
-            Gender: 'Non-Binary',
-            Education_Level: 'High School',
-            Class_Grade: 'Grade 11-A',
-            Attendance_Percent: 94.0,
-            Study_Hours_Per_Day: 3.5,
-            Assignment_Score: 85,
-            Quiz_Score: 84,
-            Previous_Score: 82,
-            Exam_Score: 86,
-            Overall_Score: 85,
-            Sleep_Hours: 7.5,
-            Motivation_Level: 'High',
-            Learning_Style: 'Visual',
-          Internet_Access: 'Yes',
-          Parental_Support: 'High',
-          Tutoring: 'No',
-          Extracurricular_Activity: 'Yes',
-          Stress_Level: 'Low',
-          Weak_Subject: 'None',
-          Performance_Level: 'Good',
-          Risk_Level: 'Low',
-          Recommended_Action: 'Explore advanced STEM modules and maintain regular coursework review.',
-          Subjects: [
-            { subject: 'Mathematics', assignment: 88, quiz: 85, exam: 86, overall: 86, grade: 'A', trend: 'up' },
-            { subject: 'Physics', assignment: 84, quiz: 82, exam: 85, overall: 84, grade: 'A-', trend: 'stable' },
-            { subject: 'Computer Science', assignment: 92, quiz: 90, exam: 94, overall: 93, grade: 'A+', trend: 'up' },
-          ],
-          History: [
-            { month: 'Jan', quizScore: 82, assignmentScore: 84, overallScore: 83, attendance: 93 },
-            { month: 'Feb', quizScore: 84, assignmentScore: 85, overallScore: 85, attendance: 94 },
-          ],
-          Last_Updated: new Date().toISOString().split('T')[0],
-        };
-
-          addStudent(newStudentRecord);
-          setSelectedStudentId(studentId);
-        }
-
+        setSelectedStudentId(account.studentId ? String(account.studentId) : null);
         setUser(account);
       }
 
@@ -717,6 +758,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getActiveAuthToken,
         fetchAllUserProfiles,
         updateUserRoleAndMapping,
+        unlinkStudentAccount,
+        searchAdminStudents,
         login,
         signUp,
         logout,
