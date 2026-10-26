@@ -344,7 +344,7 @@ export const AdminTeachersView: React.FC<AdminTeachersViewProps> = ({ onNavigate
             <strong className="font-mono text-slate-900">{staffList.length}</strong> verified faculty records
           </span>
           <span className="text-[11px] text-slate-400 font-mono">
-            Table: public.staff · Sort: staff_id ASC
+            Faculty Directory · Sort: staff_id ASC
           </span>
         </div>
       </div>
@@ -358,7 +358,7 @@ export const AdminTeachersView: React.FC<AdminTeachersViewProps> = ({ onNavigate
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-slate-900">Loading Live Faculty Dataset</h3>
               <p className="text-xs text-slate-500">
-                Fetching all faculty records from Supabase table <code className="font-mono text-slate-700">public.staff</code>...
+                Fetching all verified faculty records from institutional directory...
               </p>
             </div>
           </div>
@@ -372,7 +372,7 @@ export const AdminTeachersView: React.FC<AdminTeachersViewProps> = ({ onNavigate
             </div>
             <div className="flex-1 space-y-2">
               <h3 className="text-base font-bold text-rose-950">
-                Unable to Load Faculty Records from public.staff
+                Unable to Load Faculty Records
               </h3>
               <p className="text-xs text-rose-700 leading-relaxed max-w-2xl">
                 {error}
@@ -397,7 +397,7 @@ export const AdminTeachersView: React.FC<AdminTeachersViewProps> = ({ onNavigate
           </div>
           <h3 className="text-base font-bold text-slate-900">No Faculty Records Found in Database</h3>
           <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
-            The <code className="font-mono text-slate-700">public.staff</code> table returned zero rows. Check database synchronization or run dataset import.
+            The faculty directory returned zero rows. Check database synchronization or run dataset import.
           </p>
           <div className="pt-2">
             <button

@@ -7,6 +7,16 @@ export interface DatabaseStudentRow {
   name: string;
   age: number;
   gender: string;
+  class_grade?: string;
+  attendance_percent?: number;
+  study_hours_per_day?: number;
+  quiz_score?: number;
+  assignment_score?: number;
+  previous_score?: number;
+  weak_subject?: string;
+  stress_level?: string;
+  tutoring?: string;
+  risk_level?: string;
 }
 
 export interface DatabaseStaffRow {
@@ -103,7 +113,8 @@ export interface LinkedStudentData {
  * and handles empty results, NULLs, and multiple records gracefully without crashing.
  */
 export async function fetchStudentLinkedRecords(
-  studentId: number | string | null | undefined
+  studentId: number | string | null | undefined,
+  authToken?: string
 ): Promise<LinkedStudentData | null> {
   if (studentId === null || studentId === undefined || studentId === '') {
     return null;
@@ -129,6 +140,46 @@ export async function fetchStudentLinkedRecords(
   }
 
   const strId = String(numId);
+
+  // 1. Try secure authenticated student endpoint first (bypasses RLS recursion and guarantees zero cross-exposure)
+  try {
+    const token = await getActiveAuthToken(authToken);
+    if (token) {
+      const res = await fetch(apiUrl('/api/student/profile-records'), {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const parsed = await parseApiResponse<{
+        success: boolean;
+        isLinked: boolean;
+        student_id: number;
+        student: DatabaseStudentRow | null;
+        performance: DatabaseAcademicPerformanceRow | null;
+        attendance: DatabaseStudentAttendanceRow | null;
+        learning_profile: DatabaseLearningProfileRow | null;
+        predictions: DatabasePredictionRow[];
+        recommendations: DatabaseRecommendationRow[];
+      }>(res, '/api/student/profile-records');
+
+      if (parsed.ok && parsed.data?.success && parsed.data.isLinked) {
+        const d = parsed.data;
+        return {
+          student: d.student,
+          performance: d.performance,
+          attendance: d.attendance,
+          learningProfile: d.learning_profile,
+          prediction: (d.predictions && d.predictions.length > 0) ? d.predictions[0] : null,
+          predictions: d.predictions || [],
+          recommendations: d.recommendations || [],
+          error: null,
+        };
+      }
+    }
+  } catch {
+    // Fall back to direct PostgREST client queries below
+  }
 
   try {
     const [
@@ -593,3 +644,88 @@ export async function fetchTeacherAssignedCohort(authToken?: string): Promise<Te
     };
   }
 }
+
+export interface AdminStudentDashboardRecords {
+  success: boolean;
+  student_id: number;
+  student: DatabaseStudentRow | null;
+  performance: DatabaseAcademicPerformanceRow | null;
+  attendance: DatabaseStudentAttendanceRow | null;
+  learning_profile: DatabaseLearningProfileRow | null;
+  predictions: DatabasePredictionRow[];
+  recommendations: DatabaseRecommendationRow[];
+  user_profile: { id: string; full_name: string; email: string; role: string; student_id: number } | null;
+  assignments: any[];
+  error?: string | null;
+}
+
+export async function fetchAdminStudentDashboardRecords(
+  studentId: number | string,
+  authToken?: string
+): Promise<AdminStudentDashboardRecords> {
+  const numId = typeof studentId === 'number' ? studentId : parseInt(String(studentId).replace(/\D/g, ''), 10);
+  if (isNaN(numId) || numId <= 0) {
+    return {
+      success: false,
+      student_id: 0,
+      student: null,
+      performance: null,
+      attendance: null,
+      learning_profile: null,
+      predictions: [],
+      recommendations: [],
+      user_profile: null,
+      assignments: [],
+      error: `Invalid student ID parameter: '${studentId}'.`,
+    };
+  }
+
+  const activeToken = await getActiveAuthToken(authToken);
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(apiUrl(`/api/admin/students/${numId}/dashboard-records`), { headers });
+    const parsed = await parseApiResponse<AdminStudentDashboardRecords>(
+      res,
+      `/api/admin/students/${numId}/dashboard-records`
+    );
+
+    if (parsed.ok && parsed.data?.success) {
+      return {
+        ...parsed.data,
+        error: null,
+      };
+    } else {
+      return {
+        success: false,
+        student_id: numId,
+        student: null,
+        performance: null,
+        attendance: null,
+        learning_profile: null,
+        predictions: [],
+        recommendations: [],
+        user_profile: null,
+        assignments: [],
+        error: parsed.error || `Failed to fetch student dashboard records (HTTP ${parsed.status}).`,
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      student_id: numId,
+      student: null,
+      performance: null,
+      attendance: null,
+      learning_profile: null,
+      predictions: [],
+      recommendations: [],
+      user_profile: null,
+      assignments: [],
+      error: err?.message || 'Network exception loading student dashboard records.',
+    };
+  }
+}
+

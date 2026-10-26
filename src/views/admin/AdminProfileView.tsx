@@ -158,9 +158,9 @@ export const AdminProfileView: React.FC = () => {
             <div className="flex justify-between items-center">
               <span>Status:</span>
               {isSupabaseConnected ? (
-                <span className="font-bold text-emerald-600 text-[11px] flex items-center gap-1">
+                <span className="font-semibold text-emerald-600 text-[11px] flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  VIDYA Supabase Connected
+                  Connected & Active
                 </span>
               ) : (
                 <span className="font-mono font-semibold text-slate-500 text-[11px]">Configured</span>

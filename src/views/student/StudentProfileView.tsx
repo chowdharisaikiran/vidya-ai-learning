@@ -55,9 +55,9 @@ export const StudentProfileView: React.FC = () => {
             </div>
             <div className="self-center sm:self-auto flex items-center gap-2">
               {student.isLiveDatabaseRecord && (
-                <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-xl font-mono font-medium shadow-2xs">
+                <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-xl font-medium shadow-2xs">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  Live Supabase DB
+                  Verified Institutional Record
                 </span>
               )}
               <RiskBadge level={student.Risk_Level} size="lg" />

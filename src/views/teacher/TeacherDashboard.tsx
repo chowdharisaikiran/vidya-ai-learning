@@ -4,7 +4,8 @@ import { MetricCard } from '../../components/charts/MetricCard';
 import { RiskBadge } from '../../components/charts/RiskBadge';
 import { StudentData } from '../../types';
 import { UnlinkedTeacherCard } from '../../components/common/UnlinkedTeacherCard';
-import { getSupabaseClient } from '../../lib/supabase';
+import { getSupabaseClient, getActiveAuthToken } from '../../lib/supabase';
+import { apiUrl, parseApiResponse } from '../../lib/apiConfig';
 import {
   fetchTeacherAssignedCohort,
   DatabaseFacultyAssignment,
@@ -65,19 +66,37 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   useEffect(() => {
     let isMounted = true;
     if (staffId) {
-      const client = getSupabaseClient();
-      if (client) {
-        client
-          .from('staff')
-          .select('staff_id, staff_name, subject, overall_attendance_percentage, attendance_status')
-          .eq('staff_id', staffId)
-          .maybeSingle()
-          .then(({ data, error }) => {
-            if (isMounted && !error && data) {
-              setStaffInfo(data);
+      const loadProfile = async () => {
+        try {
+          const token = await getActiveAuthToken();
+          if (token) {
+            const res = await fetch(apiUrl('/api/teacher/profile'), {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const parsed = await parseApiResponse<{ success: boolean; staff: any }>(res, '/api/teacher/profile');
+            if (isMounted && parsed.ok && parsed.data?.staff) {
+              setStaffInfo(parsed.data.staff);
+              return;
             }
-          });
-      }
+          }
+        } catch {
+          // Proceed to client fallback
+        }
+        const client = getSupabaseClient();
+        if (client) {
+          client
+            .from('staff')
+            .select('staff_id, staff_name, subject, overall_attendance_percentage, attendance_status')
+            .eq('staff_id', staffId)
+            .maybeSingle()
+            .then(({ data, error }) => {
+              if (isMounted && !error && data) {
+                setStaffInfo(data);
+              }
+            });
+        }
+      };
+      loadProfile();
     } else {
       setStaffInfo(null);
     }
@@ -182,7 +201,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         <div className="relative overflow-hidden rounded-3xl bg-slate-900 p-6 sm:p-8 text-white shadow-md">
           <div className="relative z-10 max-w-2xl">
             <div className="flex items-center gap-2 text-xs text-slate-300 mb-3 font-medium">
-              <span className="font-mono text-[11px] tracking-wider uppercase text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full">
+              <span className="font-mono text-[11px] tracking-wider uppercase text-amber-400">
                 Account Unlinked
               </span>
               <span aria-hidden="true" className="text-slate-500">·</span>
@@ -375,8 +394,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 </div>
               </div>
               <p className="text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                <span>Permitted Table:</span>
-                <span className="font-mono text-slate-700">academic_performance</span>
+                <span>Assessment:</span>
+                <span className="font-semibold text-emerald-700">Coursework & Exams</span>
               </p>
             </div>
 
@@ -390,8 +409,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 </div>
               </div>
               <p className="text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                <span>Permitted Table:</span>
-                <span className="font-mono text-slate-700">student_attendance</span>
+                <span>Engagement:</span>
+                <span className="font-semibold text-blue-700">Classroom Rate</span>
               </p>
             </div>
 
@@ -405,8 +424,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 </div>
               </div>
               <p className="text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                <span>Predictions:</span>
-                <span className="font-mono text-slate-700">public.predictions</span>
+                <span>Priority:</span>
+                <span className="font-semibold text-rose-700">Intervention Support</span>
               </p>
             </div>
           </div>
@@ -425,8 +444,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   >
                     <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
                     <span className="font-semibold text-slate-900">{g.subject}</span>
-                    <span className="px-2 py-0.5 rounded-full bg-white text-indigo-700 font-mono font-bold text-[11px] border border-indigo-100">
-                      {g.count} {g.count === 1 ? 'student' : 'students'}
+                    <span className="text-indigo-700 font-mono font-medium text-xs">
+                      · {g.count} {g.count === 1 ? 'student' : 'students'}
                     </span>
                   </div>
                 ))}
@@ -441,8 +460,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <Users className="w-5 h-5 text-indigo-600" />
                   <span>Assigned Student Cohort</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono font-normal">
-                    {filteredStudents.length} / {assignedStudents.length}
+                  <span className="text-xs text-slate-500 font-mono font-normal">
+                    ({filteredStudents.length} / {assignedStudents.length})
                   </span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">

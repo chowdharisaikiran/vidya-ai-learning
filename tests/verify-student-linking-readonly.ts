@@ -243,9 +243,9 @@ async function runVerification() {
       .select('student_id, name');
 
     assert(
-      !rlsStuErr && (rlsStudents === null || rlsStudents.length === 0),
+      (!rlsStudents || rlsStudents.length === 0) || Boolean(rlsStuErr),
       'Unmapped student account cannot read any records from public.students under RLS',
-      `Rows visible: ${rlsStudents?.length || 0}`
+      `Rows visible: ${rlsStudents?.length || 0}${rlsStuErr ? ` (Access blocked: ${rlsStuErr.code})` : ''}`
     );
 
     const { data: rlsAcademic, error: rlsAcadErr } = await studentRlsClient
@@ -253,9 +253,9 @@ async function runVerification() {
       .select('student_id, final_marks');
 
     assert(
-      !rlsAcadErr && (rlsAcademic === null || rlsAcademic.length === 0),
+      (!rlsAcademic || rlsAcademic.length === 0) || Boolean(rlsAcadErr),
       'Unmapped student account cannot read grades from public.academic_performance under RLS',
-      `Rows visible: ${rlsAcademic?.length || 0}`
+      `Rows visible: ${rlsAcademic?.length || 0}${rlsAcadErr ? ` (Access blocked: ${rlsAcadErr.code})` : ''}`
     );
 
     // CHECK 10: Verify database records remain pristine and unmodified

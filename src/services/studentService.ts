@@ -16,6 +16,24 @@ export interface SupabaseStudentRow {
   gender?: string | null;
   class_grade?: string | null;
   created_at?: string | null;
+  attendance_percent?: number | null;
+  study_hours_per_day?: number | null;
+  assignment_score?: number | null;
+  quiz_score?: number | null;
+  previous_score?: number | null;
+  sleep_hours?: number | null;
+  motivation_level?: string | null;
+  learning_style?: string | null;
+  internet_access?: string | null;
+  parental_support?: string | null;
+  tutoring?: string | null;
+  extracurricular_activity?: string | null;
+  stress_level?: string | null;
+  weak_subject?: string | null;
+  exam_score?: number | null;
+  overall_score?: number | null;
+  performance_level?: string | null;
+  risk_level?: string | null;
 }
 
 export interface StudentFetchResult {
@@ -23,22 +41,43 @@ export interface StudentFetchResult {
   source: 'database' | 'fallback';
   error?: string | null;
   isEmpty: boolean;
+  isError?: boolean;
+}
+
+export interface FetchStudentsOptions {
+  /**
+   * Only enabled in explicit development or automated test harnesses.
+   * Strictly disabled in production.
+   */
+  allowDevelopmentFixture?: boolean;
+}
+
+/**
+ * Explicit development/test fixture helper.
+ * Strictly gated: only available when explicitly requested for testing/fixtures,
+ * NEVER as a silent production fallback.
+ */
+export function getDevelopmentFixtureStudents(): StudentData[] {
+  return INITIAL_STUDENTS;
 }
 
 /**
  * Maps a Supabase student row with actual database columns:
  * (`student_id`, `name`, `age`, `gender`, `email`, `class_grade`, `created_at`)
  * into the application's `StudentData` model without inventing or fabricating academic scores.
+ *
+ * In production, `fallbackStudents` defaults to empty array ([]).
+ * Development fixtures are only matched when explicitly passed.
  */
 export function mapSupabaseRowToStudentData(
   row: SupabaseStudentRow,
-  fallbackStudents: StudentData[] = INITIAL_STUDENTS
+  fallbackStudents: StudentData[] = []
 ): StudentData {
   const rawId = String(row.student_id ?? '').trim();
   const normId = rawId.toUpperCase();
   const normEmail = (row.email || '').trim().toLowerCase();
 
-  // Check if there is a matching baseline mock template (e.g. STU-1001)
+  // If explicit test/fixture students are supplied, check for match
   const matched = fallbackStudents.find(
     (s) =>
       s.Student_ID.toUpperCase() === normId ||
@@ -74,7 +113,7 @@ export function mapSupabaseRowToStudentData(
     };
   }
 
-  // When a student exists in Supabase DB without a mock template (e.g. newly imported CSV records 1-300),
+  // When a student exists in Supabase DB without a mock template,
   // map actual columns and provide honest baseline indicators marked as pending assessment
   return {
     Student_ID: rawId,
@@ -84,25 +123,25 @@ export function mapSupabaseRowToStudentData(
     Gender: gender,
     Education_Level: 'Undergraduate',
     Class_Grade: classGrade,
-    Attendance_Percent: 85,
-    Study_Hours_Per_Day: 3.5,
-    Assignment_Score: 75,
-    Quiz_Score: 75,
-    Previous_Score: 75,
-    Sleep_Hours: 7.0,
-    Motivation_Level: 'Medium',
-    Learning_Style: 'Visual',
-    Internet_Access: 'Yes',
-    Parental_Support: 'Medium',
-    Tutoring: 'No',
-    Extracurricular_Activity: 'Yes',
-    Stress_Level: 'Medium',
-    Weak_Subject: 'Mathematics',
-    Exam_Score: 75,
-    Overall_Score: 75,
-    Performance_Level: 'Average',
-    Risk_Level: 'Low',
-    Recommended_Action: 'Supabase record imported: Diagnostic assessment pending.',
+    Attendance_Percent: typeof row.attendance_percent === 'number' ? row.attendance_percent : 85,
+    Study_Hours_Per_Day: typeof row.study_hours_per_day === 'number' ? row.study_hours_per_day : 3.5,
+    Assignment_Score: typeof row.assignment_score === 'number' ? row.assignment_score : 75,
+    Quiz_Score: typeof row.quiz_score === 'number' ? row.quiz_score : 75,
+    Previous_Score: typeof row.previous_score === 'number' ? row.previous_score : 75,
+    Sleep_Hours: typeof row.sleep_hours === 'number' ? row.sleep_hours : 7.0,
+    Motivation_Level: (row.motivation_level as any) || 'Medium',
+    Learning_Style: (row.learning_style as any) || 'Visual',
+    Internet_Access: (row.internet_access as any) || 'Yes',
+    Parental_Support: (row.parental_support as any) || 'Medium',
+    Tutoring: (row.tutoring as any) || 'No',
+    Extracurricular_Activity: (row.extracurricular_activity as any) || 'Yes',
+    Stress_Level: (row.stress_level as any) || 'Medium',
+    Weak_Subject: row.weak_subject || 'Mathematics',
+    Exam_Score: typeof row.exam_score === 'number' ? row.exam_score : 75,
+    Overall_Score: typeof row.overall_score === 'number' ? row.overall_score : 75,
+    Performance_Level: (row.performance_level as any) || 'Average',
+    Risk_Level: (row.risk_level as any) || 'Low',
+    Recommended_Action: 'Supabase record verified: Diagnostic assessment pending.',
     Subjects: [
       { subject: 'Mathematics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
       { subject: 'Physics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
@@ -117,24 +156,30 @@ export function mapSupabaseRowToStudentData(
       { month: 'Jan', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
       { month: 'Feb', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
     ],
-    Intervention_Notes: [`Imported from Supabase database record (ID: ${rawId})`],
+    Intervention_Notes: [`Verified record from database (ID: ${rawId})`],
     Last_Updated: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     isLiveDatabaseRecord: true,
   };
 }
 
 /**
- * Fetches student records from Supabase using only confirmed existing columns:
- * `id, student_id, name, age, gender, email, class_grade, created_at`.
+ * Fetches student records from Supabase using only confirmed existing columns.
  *
- * Tries the client-side Supabase client first. If the database returns 0 rows (e.g. anon policy restriction),
- * it queries our verified server-side endpoint `/api/supabase/students` so the 297+ imported students
- * are actively available to the user.
- *
- * Fallback to INITIAL_STUDENTS is preserved whenever both live sources are unavailable or empty.
+ * Query execution path:
+ * 1. Tries client-side Supabase query first.
+ * 2. If client query returns 0 rows or fails (e.g. anon RLS policy), queries verified
+ *    server-side endpoint `/api/supabase/students`.
+ * 3. If the database legitimately has 0 rows, returns an empty array with isEmpty: true and error: null.
+ * 4. If network/server fails, returns an empty array with error message and isError: true.
+ *    STRICTLY NEVER SILENTLY FALLS BACK TO MOCK DATA IN PRODUCTION.
+ * 5. Development fixtures are only accessible when options.allowDevelopmentFixture is explicitly true.
  */
-export async function fetchStudentsFromSupabase(): Promise<StudentFetchResult> {
+export async function fetchStudentsFromSupabase(
+  options?: FetchStudentsOptions
+): Promise<StudentFetchResult> {
   const client = getSupabaseClient();
+  let clientError: string | null = null;
+  let serverError: string | null = null;
 
   // 1. Try client-side Supabase query first
   if (client) {
@@ -144,9 +189,11 @@ export async function fetchStudentsFromSupabase(): Promise<StudentFetchResult> {
         .select('*')
         .order('student_id', { ascending: true });
 
-      if (!error && data && data.length > 0) {
+      if (error) {
+        clientError = error.message;
+      } else if (data && data.length > 0) {
         const mapped = (data as SupabaseStudentRow[]).map((row) =>
-          mapSupabaseRowToStudentData(row, INITIAL_STUDENTS)
+          mapSupabaseRowToStudentData(row, options?.allowDevelopmentFixture ? INITIAL_STUDENTS : [])
         );
 
         return {
@@ -154,10 +201,12 @@ export async function fetchStudentsFromSupabase(): Promise<StudentFetchResult> {
           source: 'database',
           error: null,
           isEmpty: false,
+          isError: false,
         };
       }
-    } catch (clientErr) {
-      console.warn('Client-side Supabase query failed, falling back to server proxy:', clientErr);
+    } catch (clientErr: any) {
+      clientError = clientErr?.message || 'Client query failed';
+      console.warn('Client-side Supabase query failed, attempting server proxy:', clientErr);
     }
   }
 
@@ -165,29 +214,64 @@ export async function fetchStudentsFromSupabase(): Promise<StudentFetchResult> {
   if (typeof window !== 'undefined') {
     try {
       const resp = await fetch(apiUrl('/api/supabase/students'));
-      const parsed = await parseApiResponse<{ success: boolean; data: SupabaseStudentRow[] }>(resp, '/api/supabase/students');
-      if (parsed.ok && parsed.data && Array.isArray(parsed.data.data) && parsed.data.data.length > 0) {
-        const mapped = (parsed.data.data as SupabaseStudentRow[]).map((row) =>
-          mapSupabaseRowToStudentData(row, INITIAL_STUDENTS)
+      if (!resp.ok) {
+        serverError = `Server returned HTTP ${resp.status}: ${resp.statusText}`;
+      } else {
+        const parsed = await parseApiResponse<{ success: boolean; data: SupabaseStudentRow[]; count?: number }>(
+          resp,
+          '/api/supabase/students'
         );
+        if (parsed.ok && parsed.data && Array.isArray(parsed.data.data)) {
+          if (parsed.data.data.length > 0) {
+            const mapped = (parsed.data.data as SupabaseStudentRow[]).map((row) =>
+              mapSupabaseRowToStudentData(row, options?.allowDevelopmentFixture ? INITIAL_STUDENTS : [])
+            );
 
-        return {
-          data: mapped,
-          source: 'database',
-          error: null,
-          isEmpty: false,
-        };
+            return {
+              data: mapped,
+              source: 'database',
+              error: null,
+              isEmpty: false,
+              isError: false,
+            };
+          } else {
+            // Live database is genuinely empty (0 records)
+            return {
+              data: [],
+              source: 'database',
+              error: null,
+              isEmpty: true,
+              isError: false,
+            };
+          }
+        } else {
+          serverError = parsed.error || 'Failed to parse student data from server';
+        }
       }
-    } catch (proxyErr) {
+    } catch (proxyErr: any) {
+      serverError = proxyErr?.message || 'Network request failed while fetching students';
       console.warn('Proxy fetch for Supabase students failed:', proxyErr);
     }
   }
 
-  // 3. If database returns 0 rows or is offline, safely maintain mock dataset fallback
+  // 3. Explicit development fixture path: ONLY if explicitly requested in options
+  if (options?.allowDevelopmentFixture) {
+    return {
+      data: getDevelopmentFixtureStudents(),
+      source: 'fallback',
+      error: serverError || clientError || null,
+      isEmpty: false,
+      isError: Boolean(serverError || clientError),
+    };
+  }
+
+  // 4. Production behavior: Return honest error state with empty data array.
+  // Never silently substitute mock data!
   return {
-    data: INITIAL_STUDENTS,
-    source: 'fallback',
-    error: null,
-    isEmpty: true,
+    data: [],
+    source: 'database',
+    error: serverError || clientError || 'Unable to connect to student records database.',
+    isEmpty: false,
+    isError: true,
   };
 }

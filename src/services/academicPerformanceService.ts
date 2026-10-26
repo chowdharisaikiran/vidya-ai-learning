@@ -241,18 +241,11 @@ export async function fetchStudentAcademicPerformance(
       .select('*')
       .eq('student_id', queryId);
 
-    if (error) {
-      console.warn(`Supabase academic_performance query error for student ${studentId}:`, error.message);
-      return {
-        records: [],
-        source: 'fallback',
-        error: error.message,
-        isEmpty: true,
-      };
-    }
-
-    if (!data || data.length === 0) {
-      // If direct PostgREST client returned 0 rows, check authenticated student endpoint
+    if (error || !data || data.length === 0) {
+      if (error) {
+        console.warn(`Supabase academic_performance query error for student ${studentId}:`, error.message);
+      }
+      // If direct PostgREST client returned error or 0 rows, check authenticated student endpoint
       try {
         const token = await getActiveAuthToken();
         if (token) {
@@ -285,7 +278,7 @@ export async function fetchStudentAcademicPerformance(
       return {
         records: [],
         source: 'fallback',
-        error: null,
+        error: error ? error.message : null,
         isEmpty: true,
       };
     }

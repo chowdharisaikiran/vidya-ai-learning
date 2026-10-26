@@ -5,6 +5,7 @@ import { RiskBadge } from '../../components/charts/RiskBadge';
 import { RiskGauge } from '../../components/charts/RiskGauge';
 import { fetchStudentLinkedRecords } from '../../services/vidyaDatabaseService';
 import type { LinkedStudentData } from '../../services/vidyaDatabaseService';
+import { getActiveAuthToken } from '../../lib/supabase';
 import type { RiskLevel } from '../../types';
 import {
   Award,
@@ -53,7 +54,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
     setLoading(true);
     setError(null);
     try {
-      const result = await fetchStudentLinkedRecords(idToFetch);
+      const token = await getActiveAuthToken();
+      const result = await fetchStudentLinkedRecords(idToFetch, token || undefined);
       if (result) {
         setStudentData(result);
         if (result.error) {
@@ -344,39 +346,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
       {/* Welcome Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-slate-900 p-6 sm:p-8 text-white shadow-md">
         <div className="relative z-10 max-w-2xl">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 mb-3 font-medium">
-            <span className="font-mono text-[11px] tracking-wider uppercase text-blue-400 bg-blue-500/10 border border-blue-400/20 px-2 py-0.5 rounded-full">
-              Student ID #{studentId}
-            </span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3 font-medium">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-blue-400">Student Portal</span>
+            <span aria-hidden="true" className="text-slate-600">·</span>
+            <span className="font-mono text-slate-300">ID #{studentId}</span>
             {studentRecord?.age && (
               <>
-                <span aria-hidden="true" className="text-slate-500">·</span>
-                <span className="text-slate-300">Age: {studentRecord.age}</span>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span className="text-slate-300">{studentRecord.age} yrs</span>
               </>
             )}
             {studentRecord?.gender && (
               <>
-                <span aria-hidden="true" className="text-slate-500">·</span>
-                <span className="text-slate-300">Gender: {studentRecord.gender}</span>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span className="text-slate-300">{studentRecord.gender}</span>
               </>
             )}
             {studentRecord && (
-              <span className="inline-flex items-center gap-1 text-[10px] bg-blue-500/20 text-blue-300 border border-blue-400/30 px-2 py-0.5 rounded-full font-mono">
-                <CheckCircle2 className="w-2.5 h-2.5" />
-                Live Student DB
-              </span>
-            )}
-            {perfRecord && (
-              <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-mono">
-                <Database className="w-2.5 h-2.5" />
-                Live Marks DB
-              </span>
-            )}
-            {attRecord && (
-              <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-mono">
-                <CalendarCheck className="w-2.5 h-2.5" />
-                Live Attendance DB
-              </span>
+              <>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span className="text-emerald-400">Verified Database Profile</span>
+              </>
             )}
           </div>
 
@@ -566,7 +556,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
                   <span>Academic Performance & Assessment Marks</span>
                 </h3>
                 <p className="text-xs text-slate-500 font-normal mt-0.5">
-                  Verified marks from the institutional <code className="font-mono text-slate-700">academic_performance</code> table
+                  Continuous assessment, midterm evaluations, and final marks
                 </p>
               </div>
               <button
@@ -639,7 +629,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             ) : (
               <div className="py-10 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
                 <BarChart2 className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                <p>No academic performance row found for Student ID #{studentId} in Supabase.</p>
+                <p>No academic performance records found for Student ID #{studentId}.</p>
               </div>
             )}
           </div>
@@ -648,7 +638,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Synchronized with academic_performance database table</span>
+                <span>Verified academic performance records</span>
               </span>
               <span className="font-mono text-slate-400">ID #{studentId}</span>
             </div>
@@ -665,7 +655,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
                   <span>Attendance Record</span>
                 </h3>
                 <p className="text-xs text-slate-500 font-normal mt-0.5">
-                  Verified attendance logs from <code className="font-mono text-slate-700">student_attendance</code>
+                  Lecture and laboratory session tracking
                 </p>
               </div>
               <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700">
@@ -741,7 +731,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             ) : (
               <div className="py-10 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
                 <CalendarCheck className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                <p>No attendance records logged for Student ID #{studentId} in Supabase.</p>
+                <p>No attendance records logged for Student ID #{studentId}.</p>
               </div>
             )}
           </div>
@@ -749,7 +739,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
           {attRecord && (
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span>Status: {lectureAttendance !== null && lectureAttendance >= 75 ? 'Satisfactory' : 'Attendance Risk'}</span>
-              <span className="font-mono text-emerald-700 font-semibold">Verified in student_attendance</span>
+              <span className="font-semibold text-emerald-700">Verified attendance records</span>
             </div>
           )}
         </div>
@@ -767,7 +757,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
                   <span>Personalized Learning Profile</span>
                 </h3>
                 <p className="text-xs text-slate-500 font-normal mt-0.5">
-                  Cognitive habits and study metrics from <code className="font-mono text-slate-700">learning_profile</code> table
+                  Personal study commitment, rest cycles, and pedagogical preferences
                 </p>
               </div>
               <span className="text-xs text-violet-700 font-semibold bg-violet-50 border border-violet-100 px-2.5 py-0.5 rounded-full">
@@ -850,7 +840,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             ) : (
               <div className="py-10 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
                 <HelpCircle className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                <p>No learning profile record found for Student ID #{studentId} in Supabase.</p>
+                <p>No learning profile records found for Student ID #{studentId}.</p>
               </div>
             )}
           </div>
@@ -859,7 +849,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-violet-600" />
-                <span>Verified in public.learning_profile</span>
+                <span>Verified learning habits</span>
               </span>
               <span className="font-mono text-slate-400">ID #{studentId}</span>
             </div>
@@ -876,7 +866,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
                   <span>AI Predictive Analytics</span>
                 </h3>
                 <p className="text-xs text-slate-500 font-normal mt-0.5">
-                  Institutional ML forecasting from <code className="font-mono text-slate-700">predictions</code> table
+                  Institutional ML forecasting and academic risk classification
                 </p>
               </div>
               {allPredictionsList.length > 1 && (
@@ -946,7 +936,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             ) : (
               <div className="py-12 text-center text-slate-400 text-xs bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
                 <BrainCircuit className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                <p>No prediction records found for Student ID #{studentId} in Supabase.</p>
+                <p>No prediction records found for Student ID #{studentId}.</p>
               </div>
             )}
           </div>
@@ -954,7 +944,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
           {predRecord && (
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
               <span className="font-mono text-slate-400">Model: {predRecord.prediction_model}</span>
-              <span className="font-semibold text-indigo-700">Verified in predictions table</span>
+              <span className="font-semibold text-indigo-700">Verified ML prediction record</span>
             </div>
           )}
         </div>

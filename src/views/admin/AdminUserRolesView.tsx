@@ -520,7 +520,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                 <span>3. Live Records &amp; Confirmation</span>
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                The student selector loads all <strong>{students.length} real records</strong> from <code>public.students</code> (with name, age, gender). Saving requires an explicit confirmation modal displaying the target user and selected student record.
+                The student selector loads all <strong>{students.length} real records</strong> from verified student directory (with name, age, gender). Saving requires an explicit confirmation modal displaying the target user and selected student record.
               </p>
             </div>
           </div>
@@ -674,7 +674,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
       <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-bold text-slate-900">User Profiles (public.user_profiles)</h2>
+            <h2 className="text-sm font-bold text-slate-900">User Profiles & Access Registry</h2>
             <p className="text-[11px] text-slate-500">
               Showing {filteredProfiles.length} of {profiles.length} total user accounts
             </p>
@@ -703,7 +703,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     <div className="flex items-center justify-center gap-2">
                       <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
-                      <span>Loading authenticated user profiles from Supabase...</span>
+                      <span>Loading authenticated user profiles...</span>
                     </div>
                   </td>
                 </tr>
@@ -711,7 +711,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-slate-400">
                     <UserX className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                    <p>No matching user profiles found in <code>public.user_profiles</code>.</p>
+                    <p>No matching user profiles found in access registry.</p>
                   </td>
                 </tr>
               ) : (
@@ -854,7 +854,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                   <p className="text-[11px] text-slate-500">
                     {confirmingMapping
                       ? 'Verify target user email and dataset link before executing server-side update'
-                      : 'Assign institutional role and select verified record from public.students / public.staff'}
+                      : 'Assign institutional role and select verified record from student / faculty directory'}
                   </p>
                 </div>
               </div>
@@ -879,7 +879,7 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                     <span>Please Confirm Server-Side Update</span>
                   </div>
                   <p className="text-[11px] text-amber-800 leading-relaxed">
-                    Review the exact target email and dataset record below. Confirming will update <code>public.user_profiles</code> via the verified administrative backend.
+                    Review the exact target email and dataset record below. Confirming will update user authorization records via the verified administrative backend.
                   </p>
                 </div>
 

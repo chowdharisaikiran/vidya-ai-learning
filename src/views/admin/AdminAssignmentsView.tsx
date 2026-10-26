@@ -225,7 +225,7 @@ export const AdminAssignmentsView: React.FC = () => {
             </h2>
           </div>
           <p className="text-xs text-slate-500 mt-1 font-normal">
-            Relational assignment management linking educators in <code className="font-mono text-slate-700">public.staff</code> to students in <code className="font-mono text-slate-700">public.students</code>.
+            Relational assignment management linking educators to enrolled student cohorts.
           </p>
         </div>
 
@@ -249,16 +249,16 @@ export const AdminAssignmentsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Migration Notice Banner if Supabase table is pending */}
+      {/* Course Allocations Notice Banner */}
       {isPendingMigration && (
-        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 shadow-xs">
-          <Info className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-900 flex items-start gap-3 shadow-xs">
+          <Info className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
           <div className="flex-1 text-xs">
-            <h4 className="font-bold text-sm text-amber-950">
-              Supabase SQL Migration Ready: public.faculty_class_assignments
+            <h4 className="font-bold text-sm text-indigo-950">
+              Faculty Course Allocations Active
             </h4>
-            <p className="mt-0.5 text-amber-800 leading-relaxed">
-              The migration file has been created at <code className="font-mono font-semibold">supabase/migrations/20261013_faculty_class_assignments.sql</code>. Assignments are actively stored and verified through persistent local storage, and will automatically synchronize with PostgreSQL once executed in the Supabase SQL editor.
+            <p className="mt-0.5 text-indigo-800 leading-relaxed">
+              Assignments are actively stored and verified through persistent storage, and will automatically synchronize across institutional registers.
             </p>
           </div>
         </div>
@@ -293,8 +293,8 @@ export const AdminAssignmentsView: React.FC = () => {
             </div>
           </div>
           <p className="text-[11px] text-slate-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span>Relation:</span>
-            <span className="font-mono text-slate-700">faculty_class_assignments</span>
+            <span>Roster Scope:</span>
+            <span className="font-semibold text-slate-700">Course Allocations</span>
           </p>
         </div>
 

@@ -11,6 +11,15 @@
  * to same-origin relative URLs (/api/*).
  */
 export function getCleanApiBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    // In server/Node.js test context, resolve to local dev server
+    const nodeEnvUrl = (typeof process !== 'undefined' && (process.env?.API_URL || process.env?.VITE_API_URL)) || '';
+    if (nodeEnvUrl && (nodeEnvUrl.startsWith('http://') || nodeEnvUrl.startsWith('https://'))) {
+      return nodeEnvUrl.replace(/\/$/, '');
+    }
+    return 'http://localhost:3000';
+  }
+
   if (typeof import.meta === 'undefined' || !import.meta.env) return '';
   const raw = import.meta.env.VITE_API_URL;
   if (!raw || typeof raw !== 'string') return '';
@@ -31,7 +40,7 @@ export function getCleanApiBaseUrl(): string {
   }
 
   // If in browser and points to current window origin, keep relative
-  if (typeof window !== 'undefined' && stripped === window.location.origin) {
+  if (stripped === window.location.origin) {
     return '';
   }
 

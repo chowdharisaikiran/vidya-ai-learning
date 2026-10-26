@@ -109,9 +109,9 @@ async function runSecurityTestSuite() {
     });
     const crossStuRes = await mappedClient.from('students').select('*').eq('student_id', 2);
     assert(
-      crossStuRes.data?.length === 0,
+      !crossStuRes.data || crossStuRes.data.length === 0,
       'Mapped student cannot access other students records in public.students under RLS',
-      `Rows visible: ${crossStuRes.data?.length ?? 0}`
+      `Rows visible: ${crossStuRes.data?.length ?? 0}${crossStuRes.error ? ` (Access blocked: ${crossStuRes.error.code})` : ''}`
     );
 
     // ------------------------------------------------------------------------

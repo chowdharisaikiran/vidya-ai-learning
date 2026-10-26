@@ -10,10 +10,12 @@ import {
   Target,
   BarChart,
   CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 
 export const AdminInstitutionAnalyticsView: React.FC = () => {
-  const { allStudents } = useAuth();
+  const { allStudents, studentsLoading, studentsError, refreshStudents } = useAuth();
   const total = allStudents.length || 1;
 
   const avgScore =
@@ -86,6 +88,26 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
         </div>
       </div>
 
+      {studentsError && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 shadow-xs">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <p className="text-xs font-bold text-amber-900">Database Connection Issue</p>
+              <p className="text-[11px] text-amber-700">{studentsError}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => refreshStudents()}
+            disabled={studentsLoading}
+            className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-xs disabled:opacity-50 transition-colors shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${studentsLoading ? 'animate-spin' : ''}`} />
+            {studentsLoading ? 'Reconnecting...' : 'Retry Connection'}
+          </button>
+        </div>
+      )}
+
       {/* High-Level Institutional KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
@@ -124,9 +146,15 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {classStats.map((cls) => (
-            <div key={cls.classGrade} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-3">
+        {allStudents.length === 0 ? (
+          <div className="py-8 text-center text-slate-400">
+            <p className="font-semibold text-slate-700 text-xs">No active class streams found in registry</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Enrolled scholars will appear categorized by stream once available.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {classStats.map((cls) => (
+              <div key={cls.classGrade} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-extrabold text-slate-900 text-sm">{cls.classGrade}</span>
                 <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
@@ -157,7 +185,8 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
             </div>
           ))}
         </div>
-      </div>
+      )}
+    </div>
 
       {/* Early Warning Interventions & Pedagogical Audit */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -19,6 +19,7 @@ import { StudentPerformanceView } from './views/student/StudentPerformanceView';
 import { StudentRecommendationsView } from './views/student/StudentRecommendationsView';
 import { StudentPredictionView } from './views/student/StudentPredictionView';
 import { StudentProfileView } from './views/student/StudentProfileView';
+import { StudentSettingsView } from './views/student/StudentSettingsView';
 
 // Teacher Views
 import { TeacherDashboard } from './views/teacher/TeacherDashboard';
@@ -26,6 +27,7 @@ import { TeacherStudentsView } from './views/teacher/TeacherStudentsView';
 import { TeacherAnalyticsView } from './views/teacher/TeacherAnalyticsView';
 import { TeacherPredictionView } from './views/teacher/TeacherPredictionView';
 import { TeacherProfileView } from './views/teacher/TeacherProfileView';
+import { TeacherSettingsView } from './views/teacher/TeacherSettingsView';
 
 // Admin Views
 import { AdminDashboard } from './views/admin/AdminDashboard';
@@ -36,6 +38,7 @@ import { AdminTeachersView } from './views/admin/AdminTeachersView';
 import { AdminInstitutionAnalyticsView } from './views/admin/AdminInstitutionAnalyticsView';
 import { AdminPredictionView } from './views/admin/AdminPredictionView';
 import { AdminProfileView } from './views/admin/AdminProfileView';
+import { AdminSettingsView } from './views/admin/AdminSettingsView';
 
 // Helper to map pathname to authenticated dashboard tab
 function getTabFromPath(pathname: string, role: string): string {
@@ -51,6 +54,7 @@ function getTabFromPath(pathname: string, role: string): string {
     if (clean === 'recommendations' || clean === 'ai-recommendations') return 'ai-recommendations';
     if (clean === 'prediction' || clean === 'predictions' || clean === 'ai-prediction') return 'ai-prediction';
     if (clean === 'profile') return 'profile';
+    if (clean === 'settings') return 'settings';
   }
 
   // Teacher specific
@@ -59,6 +63,7 @@ function getTabFromPath(pathname: string, role: string): string {
     if (clean === 'analytics' || clean === 'performance-analytics') return 'performance-analytics';
     if (clean === 'prediction' || clean === 'predictions' || clean === 'ai-prediction') return 'ai-prediction';
     if (clean === 'profile') return 'profile';
+    if (clean === 'settings') return 'settings';
   }
 
   // Admin specific
@@ -70,6 +75,7 @@ function getTabFromPath(pathname: string, role: string): string {
     if (clean === 'analytics' || clean === 'institution-analytics') return 'institution-analytics';
     if (clean === 'prediction' || clean === 'predictions' || clean === 'ai-prediction') return 'ai-prediction';
     if (clean === 'profile') return 'profile';
+    if (clean === 'settings') return 'settings';
   }
 
   return 'dashboard';
@@ -126,14 +132,20 @@ const MainLayout: React.FC = () => {
       switch (currentTab) {
         case 'dashboard':
           return <StudentDashboard onNavigate={handleNavigate} />;
+        case 'performance':
         case 'my-performance':
           return <StudentPerformanceView />;
+        case 'recommendations':
         case 'ai-recommendations':
           return <StudentRecommendationsView />;
+        case 'prediction':
+        case 'predictions':
         case 'ai-prediction':
           return <StudentPredictionView />;
         case 'profile':
           return <StudentProfileView />;
+        case 'settings':
+          return <StudentSettingsView onNavigate={handleNavigate} />;
         default:
           return <StudentDashboard onNavigate={handleNavigate} />;
       }
@@ -154,12 +166,17 @@ const MainLayout: React.FC = () => {
           );
         case 'students':
           return <TeacherStudentsView />;
+        case 'analytics':
         case 'performance-analytics':
           return <TeacherAnalyticsView />;
+        case 'prediction':
+        case 'predictions':
         case 'ai-prediction':
           return <TeacherPredictionView />;
         case 'profile':
           return <TeacherProfileView />;
+        case 'settings':
+          return <TeacherSettingsView onNavigate={handleNavigate} />;
         default:
           return (
             <TeacherDashboard
@@ -179,19 +196,25 @@ const MainLayout: React.FC = () => {
         case 'dashboard':
           return <AdminDashboard onNavigate={handleNavigate} />;
         case 'user-roles':
+        case 'roles':
           return <AdminUserRolesView />;
         case 'assignments':
           return <AdminAssignmentsView />;
         case 'students':
-          return <AdminStudentsView />;
+          return <AdminStudentsView onNavigate={handleNavigate} />;
         case 'teachers':
           return <AdminTeachersView onNavigate={handleNavigate} />;
+        case 'analytics':
         case 'institution-analytics':
           return <AdminInstitutionAnalyticsView />;
+        case 'prediction':
+        case 'predictions':
         case 'ai-prediction':
           return <AdminPredictionView />;
         case 'profile':
           return <AdminProfileView />;
+        case 'settings':
+          return <AdminSettingsView onNavigate={handleNavigate} />;
         default:
           return <AdminDashboard onNavigate={handleNavigate} />;
       }

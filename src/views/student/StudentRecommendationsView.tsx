@@ -204,8 +204,8 @@ export const StudentRecommendationsView: React.FC = () => {
             <h3 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
               <Database className="w-4 h-4 text-emerald-600" />
               <span>Official Institutional Directives</span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                public.recommendations ({dbRecommendations.length})
+              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Verified Faculty Directives ({dbRecommendations.length})
               </span>
             </h3>
             <p className="text-xs text-slate-500 font-normal mt-0.5">
@@ -222,7 +222,7 @@ export const StudentRecommendationsView: React.FC = () => {
         {dbLoading ? (
           <div className="py-6 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
             <RefreshCw className="w-4 h-4 animate-spin text-slate-400" />
-            <span>Loading institutional directives from Supabase...</span>
+            <span>Loading institutional directives...</span>
           </div>
         ) : dbRecommendations.length === 0 ? (
           <div className="py-6 px-4 rounded-2xl bg-slate-50 border border-slate-200/60 text-center text-xs text-slate-500">

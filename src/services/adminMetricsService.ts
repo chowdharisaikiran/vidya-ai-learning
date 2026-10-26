@@ -310,17 +310,52 @@ export async function fetchAdminDashboardMetrics(authToken?: string | null): Pro
     }
   }
 
-  // 4. Average Attendance
+  // 4. Average Attendance (Direct client query with secure admin endpoint fallback)
   let avgAttendance: number | null = null;
   let avgLabAttendance: number | null = null;
   let validAttCount = 0;
+  let attendanceRows: any[] = [];
+  let attendanceFetchError: string | null = null;
 
-  if (!attRes.error && attRes.data) {
+  if (!attRes.error && Array.isArray(attRes.data) && attRes.data.length > 0) {
+    attendanceRows = attRes.data;
+  } else {
+    // Under Row Level Security, direct client queries fail with 42P17 recursion.
+    // Query the protected server endpoint with the admin's active bearer token.
+    const tokenToUse = activeToken || (await getActiveAuthToken());
+    if (tokenToUse) {
+      try {
+        const resp = await fetch(apiUrl('/api/admin/attendance'), {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenToUse}`,
+          },
+        });
+        const parsed = await parseApiResponse<{ success: boolean; student_attendance?: any[]; attendance?: any[] }>(
+          resp,
+          'Admin attendance endpoint (/api/admin/attendance)'
+        );
+        const rows = parsed.data?.student_attendance || parsed.data?.attendance;
+        if (parsed.ok && parsed.data?.success && Array.isArray(rows) && rows.length > 0) {
+          attendanceRows = rows;
+          attendanceFetchError = null;
+        } else if (!parsed.ok) {
+          attendanceFetchError = parsed.error;
+        }
+      } catch (e: any) {
+        attendanceFetchError = e?.message || 'Error fetching attendance via admin bridge.';
+      }
+    } else {
+      attendanceFetchError = attRes.error?.message || 'No authorization token available for attendance endpoint.';
+    }
+  }
+
+  if (attendanceRows.length > 0) {
     let attSum = 0;
     let labSum = 0;
     let validLabCount = 0;
 
-    attRes.data.forEach((row) => {
+    attendanceRows.forEach((row) => {
       if (typeof row.attendance_percentage === 'number' && !isNaN(row.attendance_percentage)) {
         validAttCount++;
         attSum += row.attendance_percentage;
@@ -339,24 +374,58 @@ export async function fetchAdminDashboardMetrics(authToken?: string | null): Pro
     }
   }
 
-  // 5. Predictions & High-Risk Students (Distinct Student IDs)
+  // 5. Predictions & High-Risk Students (Direct client query with secure admin endpoint fallback)
   let highRiskStudentsCount: number | null = null;
   let modRiskStudentsCount: number | null = null;
   let lowRiskStudentsCount: number | null = null;
   let validPredictionsCount = 0;
   let predictionModelName: string | null = null;
+  let predictionRows: any[] = [];
+  let predictionsFetchError: string | null = null;
 
-  if (!predRes.error && predRes.data) {
-    validPredictionsCount = predRes.data.length;
-    if (predRes.data.length > 0 && predRes.data[0].prediction_model) {
-      predictionModelName = String(predRes.data[0].prediction_model).trim();
+  if (!predRes.error && Array.isArray(predRes.data) && predRes.data.length > 0) {
+    predictionRows = predRes.data;
+  } else {
+    // Under Row Level Security, direct client queries fail with 42P17 recursion.
+    // Query the protected server endpoint with the admin's active bearer token.
+    const tokenToUse = activeToken || (await getActiveAuthToken());
+    if (tokenToUse) {
+      try {
+        const resp = await fetch(apiUrl('/api/admin/predictions'), {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${tokenToUse}`,
+          },
+        });
+        const parsed = await parseApiResponse<{ success: boolean; predictions: any[] }>(
+          resp,
+          'Admin predictions endpoint (/api/admin/predictions)'
+        );
+        if (parsed.ok && parsed.data?.success && Array.isArray(parsed.data.predictions) && parsed.data.predictions.length > 0) {
+          predictionRows = parsed.data.predictions;
+          predictionsFetchError = null;
+        } else if (!parsed.ok) {
+          predictionsFetchError = parsed.error;
+        }
+      } catch (e: any) {
+        predictionsFetchError = e?.message || 'Error fetching predictions via admin bridge.';
+      }
+    } else {
+      predictionsFetchError = predRes.error?.message || 'No authorization token available for predictions endpoint.';
+    }
+  }
+
+  if (predictionRows.length > 0) {
+    validPredictionsCount = predictionRows.length;
+    if (predictionRows[0].prediction_model) {
+      predictionModelName = String(predictionRows[0].prediction_model).trim();
     }
 
     const highRiskSet = new Set<string>();
     const modRiskSet = new Set<string>();
     const lowRiskSet = new Set<string>();
 
-    predRes.data.forEach((p) => {
+    predictionRows.forEach((p) => {
       if (p.student_id === null || p.student_id === undefined) return;
       const sid = String(p.student_id).trim();
       if (!sid) return;
@@ -380,8 +449,8 @@ export async function fetchAdminDashboardMetrics(authToken?: string | null): Pro
     students: studentList && studentList.length > 0 ? null : (studentsFetchError || studentsRes.error?.message || null),
     staff: staffList && staffList.length > 0 ? null : (staffFetchError || staffRes.error?.message || null),
     academic: academicRows.length > 0 ? null : (academicFetchError || acadRes.error?.message || null),
-    attendance: attRes.error?.message || null,
-    predictions: predRes.error?.message || null,
+    attendance: attendanceRows.length > 0 ? null : (attendanceFetchError || attRes.error?.message || null),
+    predictions: predictionRows.length > 0 ? null : (predictionsFetchError || predRes.error?.message || null),
   };
 
   const hasError = Boolean(

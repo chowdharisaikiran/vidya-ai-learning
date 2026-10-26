@@ -126,6 +126,95 @@ app.post('/api/auth/forgot-password', (req, res) => {
   });
 });
 
+// GET /api/auth/me: Securely resolves caller's authenticated profile from public.user_profiles
+// using the verified Supabase Auth JWT token (bypasses client-side RLS infinite recursion)
+app.get('/api/auth/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid Authorization header.' });
+  }
+
+  const token = authHeader.split(' ')[1].trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Empty bearer token.' });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Server configuration error: Database client unavailable.' });
+  }
+
+  try {
+    const { data: { user: authUser }, error: authErr } = await supabaseAdmin.auth.getUser(token);
+    if (authErr || !authUser) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired Supabase authentication session.' });
+    }
+
+    const { data: profile, error: profErr } = await supabaseAdmin
+      .from('user_profiles')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (profErr) {
+      console.error('Error fetching user_profiles in /api/auth/me:', profErr.message);
+      return res.status(500).json({ error: 'Failed to query user profile from institutional database.' });
+    }
+
+    if (!profile) {
+      // Authenticated via Supabase Auth, but no record exists in public.user_profiles
+      return res.json({
+        success: true,
+        isProfileMissing: true,
+        user: {
+          id: authUser.id,
+          username: authUser.email ? authUser.email.split('@')[0] : '',
+          email: authUser.email || '',
+          name: authUser.user_metadata?.full_name || authUser.email || 'Profile not found',
+          role: 'pending',
+          studentId: null,
+          staffId: null,
+          isProfileMissing: true,
+        },
+      });
+    }
+
+    const actualRole =
+      profile.role === 'admin' || profile.role === 'teacher' || profile.role === 'student'
+        ? profile.role
+        : 'pending';
+
+    const actualName = profile.full_name?.trim() || profile.email || authUser.email || '';
+    const actualEmail = profile.email || authUser.email || '';
+    const username = actualEmail.includes('@')
+      ? actualEmail.split('@')[0]
+      : actualName.toLowerCase().replace(/\s+/g, '');
+
+    const studentId =
+      actualRole === 'student' && profile.student_id !== null && profile.student_id !== undefined
+        ? Number(profile.student_id)
+        : null;
+    const staffId = actualRole === 'teacher' ? (profile.staff_id || null) : null;
+
+    return res.json({
+      success: true,
+      isProfileMissing: false,
+      user: {
+        id: authUser.id,
+        username,
+        email: actualEmail,
+        name: actualName,
+        role: actualRole,
+        studentId,
+        staffId,
+        isProfileMissing: false,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error loading user profile.' });
+  }
+});
+
 // ================= SUPABASE CONFIGURATION =================
 const SUPABASE_CONFIG = {
   url: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://fxwzjeyiywprabttaznt.supabase.co',
@@ -893,6 +982,106 @@ app.get('/api/admin/students', async (req, res) => {
   }
 });
 
+// GET /api/admin/students/:id/dashboard-records: Privileged admin query for a specific student's complete dashboard data
+app.get('/api/admin/students/:id/dashboard-records', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  const rawId = req.params.id;
+  const numId = parseInt(String(rawId).replace(/\D/g, ''), 10);
+  if (isNaN(numId) || numId <= 0) {
+    return res.status(400).json({ error: `Invalid numeric student ID parameter: '${rawId}'.` });
+  }
+
+  const strId = String(numId);
+
+  try {
+    // 1. Verify primary student record exists in public.students
+    const { data: studentRecord, error: stuErr } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .eq('student_id', numId)
+      .maybeSingle();
+
+    if (stuErr) {
+      return res.status(500).json({ error: `Database error querying student #${numId}: ${stuErr.message}` });
+    }
+
+    if (!studentRecord) {
+      return res.status(404).json({ error: `Student with ID #${numId} was not found in institutional records.` });
+    }
+
+    // 2. Query all associated records in parallel across public schema tables
+    const [
+      perfRes,
+      attRes,
+      learningRes,
+      predRes,
+      recomRes,
+      userProfileRes,
+      assignmentsRes
+    ] = await Promise.all([
+      supabaseAdmin.from('academic_performance').select('*').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('student_attendance').select('*').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('learning_profile').select('*').in('student_id', [strId, numId]).maybeSingle(),
+      supabaseAdmin.from('predictions').select('*').in('student_id', [strId, numId]).order('prediction_date', { ascending: false }),
+      supabaseAdmin.from('recommendations').select('*').in('student_id', [strId, numId]),
+      supabaseAdmin.from('user_profiles').select('id, full_name, email, role, student_id').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('faculty_class_assignments').select('*').eq('student_id', numId)
+    ]);
+
+    // Enriched faculty assignments if present
+    let enrichedAssignments: any[] = [];
+    if (assignmentsRes.data && assignmentsRes.data.length > 0) {
+      const staffIds = assignmentsRes.data.map((a: any) => a.staff_id).filter(Boolean);
+      const subjectIds = assignmentsRes.data.map((a: any) => a.subject_id).filter(Boolean);
+
+      const [staffRes, subRes] = await Promise.all([
+        staffIds.length > 0
+          ? supabaseAdmin.from('staff').select('staff_id, staff_name, subject, overall_attendance_percentage').in('staff_id', staffIds)
+          : { data: [] },
+        subjectIds.length > 0
+          ? supabaseAdmin.from('subjects').select('subject_id, subject_name, department').in('subject_id', subjectIds)
+          : { data: [] }
+      ]);
+
+      const staffMap = new Map((staffRes.data || []).map((s: any) => [s.staff_id, s]));
+      const subMap = new Map((subRes.data || []).map((s: any) => [s.subject_id, s]));
+
+      enrichedAssignments = assignmentsRes.data.map((a: any) => ({
+        ...a,
+        staff: staffMap.get(a.staff_id) || null,
+        subject: subMap.get(a.subject_id) || null
+      }));
+    }
+
+    return res.json({
+      success: true,
+      student_id: numId,
+      student: studentRecord,
+      performance: perfRes.data || null,
+      attendance: attRes.data || null,
+      learning_profile: learningRes.data || null,
+      predictions: predRes.data || [],
+      recommendations: recomRes.data || [],
+      user_profile: userProfileRes.data || null,
+      assignments: enrichedAssignments
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error loading student dashboard records.' });
+  }
+});
+
 app.post('/api/admin/students', async (req, res) => {
   const auth = await verifyAdminCaller(req);
   if (!auth.isAuthorized) {
@@ -1408,6 +1597,41 @@ app.get('/api/admin/academic-performance', async (req, res) => {
   }
 });
 
+app.get(['/api/admin/attendance', '/api/admin/student-attendance'], async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  try {
+    const { data, count, error } = await supabaseAdmin
+      .from('student_attendance')
+      .select('attendance_id, student_id, attendance_percentage, lab_attendance_percentage, lectures_attended, total_lectures, total_lab_sessions, labs_attended', { count: 'exact' })
+      .order('student_id', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({
+      success: true,
+      count: count ?? data?.length ?? 0,
+      student_attendance: data || [],
+      attendance: data || [],
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error fetching student attendance.' });
+  }
+});
+
 app.get('/api/admin/predictions', async (req, res) => {
   const auth = await verifyAdminCaller(req);
   if (!auth.isAuthorized) {
@@ -1717,7 +1941,54 @@ app.delete('/api/admin/assignments/:id', async (req, res) => {
   });
 });
 
-// 4. Teacher: View assigned students with permitted academic metrics
+// 4. Teacher: View own verified faculty profile
+app.get('/api/teacher/profile', async (req, res) => {
+  const auth = await verifyTeacherCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  if (!auth.staffId) {
+    return res.json({
+      success: true,
+      staff_id: null,
+      isLinked: false,
+      staff: null,
+      message: 'Faculty account is not linked to a staff record in user_profiles. Contact administrator.',
+    });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('staff')
+      .select('staff_id, staff_name, subject, overall_attendance_percentage, attendance_status')
+      .eq('staff_id', auth.staffId)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.json({
+      success: true,
+      staff_id: auth.staffId,
+      isLinked: true,
+      staff: data || null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error fetching teacher profile.' });
+  }
+});
+
+// 5. Teacher: View assigned students with permitted academic metrics
 app.get('/api/teacher/assigned-students', async (req, res) => {
   const auth = await verifyTeacherCaller(req);
   if (!auth.isAuthorized) {
@@ -2128,6 +2399,92 @@ app.get('/api/student/academic-performance', async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Server error fetching student academic performance.' });
+  }
+});
+
+// 2. Authenticated Student: View own complete linked records (profile, performance, attendance, predictions, recommendations)
+app.get('/api/student/profile-records', async (req, res) => {
+  const auth = await verifyStudentCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  if (auth.studentId === null || auth.studentId === undefined) {
+    return res.json({
+      success: true,
+      isLinked: false,
+      student_id: null,
+      student: null,
+      performance: null,
+      attendance: null,
+      learning_profile: null,
+      predictions: [],
+      recommendations: [],
+      message: 'Student account is not linked to an institutional record in user_profiles. Contact administrator.',
+    });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      isSetupError: true,
+    });
+  }
+
+  const numId = auth.studentId;
+  const strId = String(numId);
+
+  try {
+    const [
+      studentRes,
+      perfRes,
+      attRes,
+      learningRes,
+      predRes,
+      recomRes,
+    ] = await Promise.all([
+      supabaseAdmin.from('students').select('*').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('academic_performance').select('*').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('student_attendance').select('*').eq('student_id', numId).maybeSingle(),
+      supabaseAdmin.from('learning_profile').select('*').in('student_id', [strId, numId]).maybeSingle(),
+      supabaseAdmin.from('predictions').select('*').in('student_id', [strId, numId]),
+      supabaseAdmin.from('recommendations').select('*').in('student_id', [strId, numId]),
+    ]);
+
+    const allPredictions = predRes.data || [];
+    allPredictions.sort((a, b) => {
+      if (a.prediction_date && b.prediction_date) {
+        return new Date(b.prediction_date).getTime() - new Date(a.prediction_date).getTime();
+      }
+      return String(b.prediction_id || '').localeCompare(String(a.prediction_id || ''));
+    });
+
+    const allRecommendations = recomRes.data || [];
+    const priorityWeights: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
+    allRecommendations.sort((a, b) => {
+      const pA = priorityWeights[a.priority || ''] || 0;
+      const pB = priorityWeights[b.priority || ''] || 0;
+      if (pB !== pA) return pB - pA;
+      if (a.created_at && b.created_at) {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return 0;
+    });
+
+    return res.json({
+      success: true,
+      isLinked: true,
+      student_id: numId,
+      student: studentRes.data || null,
+      performance: perfRes.data || null,
+      attendance: attRes.data || null,
+      learning_profile: learningRes.data || null,
+      predictions: allPredictions,
+      recommendations: allRecommendations,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Server error fetching student profile records.' });
   }
 });
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { RiskBadge } from '../../components/charts/RiskBadge';
 import { calculateAcademicPrediction } from '../../services/mlModel';
@@ -16,19 +16,73 @@ import {
   FileSpreadsheet,
   X,
   Sparkles,
+  ChevronLeft,
+  ChevronRight,
   Database,
   RefreshCw,
+  LayoutDashboard,
 } from 'lucide-react';
 import { apiUrl, parseApiResponse } from '../../lib/apiConfig';
 import { getActiveAuthToken } from '../../services/vidyaDatabaseService';
+import { AdminStudentDetailView } from './AdminStudentDetailView';
 
-export const AdminStudentsView: React.FC = () => {
-  const { allStudents, refreshStudents, studentsLoading } = useAuth();
+export interface AdminStudentsViewProps {
+  initialStudentId?: string | number | null;
+  onNavigate?: (tab: string) => void;
+}
+
+export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
+  initialStudentId,
+}) => {
+  const { allStudents, refreshStudents, studentsLoading, studentsError } = useAuth();
   const [search, setSearch] = useState('');
   const [riskFilter, setRiskFilter] = useState<'all' | 'High' | 'Moderate' | 'Low'>('all');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Helper to extract student ID from query params or route
+  const getInitialSelectedId = (): string | number | null => {
+    if (initialStudentId) return initialStudentId;
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const qId = params.get('id') || params.get('studentId');
+    if (qId) return qId;
+    const match = window.location.pathname.match(/\/students\/([a-zA-Z0-9_-]+)/);
+    if (match && match[1]) return match[1];
+    return null;
+  };
+
+  const [selectedStudentId, setSelectedStudentId] = useState<string | number | null>(getInitialSelectedId);
+
+  // Synchronize browser history (back/forward) with selected student
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => {
+      setSelectedStudentId(getInitialSelectedId());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const handleSelectStudent = (id: string | number) => {
+    setSelectedStudentId(id);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('id', String(id));
+      window.history.pushState({ studentId: id }, '', url.pathname + url.search);
+    }
+  };
+
+  const handleBackToStudents = () => {
+    setSelectedStudentId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('id');
+      url.searchParams.delete('studentId');
+      window.history.pushState(null, '', url.pathname + (url.search ? url.search : ''));
+    }
+  };
 
   // Add Student Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -69,6 +123,20 @@ export const AdminStudentsView: React.FC = () => {
     const matchesRisk = riskFilter === 'all' || s.Risk_Level === riskFilter;
     return matchesSearch && matchesRisk;
   });
+
+  // Pagination state & calculation
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 20;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, riskFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedStudents = React.useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filtered.slice(startIndex, startIndex + pageSize);
+  }, [filtered, currentPage, pageSize]);
 
   const handleExportCSV = async () => {
     setActionError(null);
@@ -142,11 +210,11 @@ export const AdminStudentsView: React.FC = () => {
       }
 
       await refreshStudents();
-      setActionSuccess(`Student "${formData.Name}" successfully persisted to public.students.`);
+      setActionSuccess(`Student "${formData.Name}" successfully added to student registry.`);
       setShowAddModal(false);
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      setActionError(err?.message || 'Error creating student in Supabase.');
+      setActionError(err?.message || 'Error creating student record.');
     } finally {
       setSubmitting(false);
     }
@@ -179,7 +247,7 @@ export const AdminStudentsView: React.FC = () => {
       }
 
       await refreshStudents();
-      setActionSuccess(`Student #${numericId} (${name}) removed from public.students.`);
+      setActionSuccess(`Student #${numericId} (${name}) removed from student registry.`);
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
       setActionError(err?.message || 'Failed to delete student.');
@@ -216,7 +284,7 @@ export const AdminStudentsView: React.FC = () => {
       }
 
       await refreshStudents();
-      setImportSuccessMsg(`Successfully imported ${result.data.count} student records into public.students.`);
+      setImportSuccessMsg(`Successfully imported ${result.data.count} student records into student registry.`);
       setTimeout(() => {
         setShowImportModal(false);
         setImportSuccessMsg(null);
@@ -227,7 +295,16 @@ export const AdminStudentsView: React.FC = () => {
     }
   };
 
-  const isLiveSupabase = allStudents.some((s) => s.isLiveDatabaseRecord);
+  // If a student is currently selected, render the dedicated Student Dashboard view
+  if (selectedStudentId !== null && selectedStudentId !== undefined) {
+    return (
+      <AdminStudentDetailView
+        studentId={selectedStudentId}
+        onBack={handleBackToStudents}
+        onNavigateToAnotherStudent={handleSelectStudent}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -239,27 +316,21 @@ export const AdminStudentsView: React.FC = () => {
             <span>Student Information System & Data Science Registry</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            23 Data Science fields mapped for real dataset connection, ML early warning, and bulk CSV ingestion.
+            23 Data Science fields mapped for verified cohort analysis, ML early warning, and bulk CSV ingestion.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {isLiveSupabase ? (
-            <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium bg-emerald-50 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-xl shadow-2xs">
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              Live Supabase: {allStudents.length} Students
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium bg-amber-50 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-xl">
-              Mock Data Fallback ({allStudents.length} Students)
-            </span>
-          )}
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono font-medium bg-indigo-50 text-indigo-800 border border-indigo-200 px-3 py-1.5 rounded-xl shadow-2xs">
+            <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
+            Verified Registry: {allStudents.length} Scholars
+          </span>
 
           <button
             onClick={() => refreshStudents()}
             disabled={studentsLoading}
             className="p-2 rounded-xl border border-slate-200/80 hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
-            title="Refresh student roster from Supabase"
+            title="Refresh student roster"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${studentsLoading ? 'animate-spin text-indigo-600' : ''}`} />
           </button>
@@ -307,6 +378,27 @@ export const AdminStudentsView: React.FC = () => {
           <span className="font-semibold flex-1">{actionSuccess}</span>
           <button onClick={() => setActionSuccess(null)} className="text-emerald-500 hover:text-emerald-700 font-bold p-1">
             <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {studentsError && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">Database Connection Error</span>
+              <p className="mt-0.5 text-rose-700 leading-relaxed">{studentsError}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Mock-data fallback is disabled. Please check your connection and retry.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => refreshStudents()}
+            disabled={studentsLoading}
+            className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${studentsLoading ? 'animate-spin' : ''}`} />
+            <span>Retry Connection</span>
           </button>
         </div>
       )}
@@ -361,54 +453,163 @@ export const AdminStudentsView: React.FC = () => {
                 <th className="py-3 px-4">Exam Score</th>
                 <th className="py-3 px-4">Composite Score</th>
                 <th className="py-3 px-4">Risk Level</th>
-                <th className="py-3 px-4 text-right">Action</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 whitespace-nowrap">
-              {filtered.map((s) => (
-                <tr key={s.Student_ID} className="hover:bg-slate-50/60 transition-colors">
-                  <td className="py-3 px-4 font-mono font-bold text-slate-700">{s.Student_ID}</td>
-                  <td className="py-3 px-4 font-bold text-slate-900">{s.Name}</td>
-                  <td className="py-3 px-4 text-slate-500">{s.Age} / {s.Gender}</td>
-                  <td className="py-3 px-4 text-slate-600 font-medium">{s.Class_Grade}</td>
-                  <td className="py-3 px-4 font-mono font-semibold">
-                    <span className={s.Attendance_Percent < 75 ? 'text-rose-600 font-bold' : 'text-slate-800'}>
-                      {s.Attendance_Percent}%
-                    </span>
+              {studentsLoading ? (
+                <tr>
+                  <td colSpan={15} className="py-12 text-center text-slate-400">
+                    <RefreshCw className="w-6 h-6 mx-auto mb-2 text-indigo-500 animate-spin" />
+                    <p className="font-semibold text-slate-700 text-xs">Querying institutional student registry...</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Fetching verified records from database.</p>
                   </td>
-                  <td className="py-3 px-4 font-mono">{s.Study_Hours_Per_Day} hrs</td>
-                  <td className="py-3 px-4 font-mono text-slate-600">
-                    {s.Assignment_Score}% / {s.Quiz_Score}%
-                  </td>
-                  <td className="py-3 px-4 font-mono">{s.Previous_Score}%</td>
-                  <td className="py-3 px-4 text-slate-600">
-                    {s.Sleep_Hours}h / {s.Stress_Level}
-                  </td>
-                  <td className="py-3 px-4 text-slate-600 font-medium">{s.Learning_Style}</td>
-                  <td className="py-3 px-4">
-                    <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-semibold text-[11px]">
-                      {s.Weak_Subject}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 font-mono font-semibold text-slate-800">{s.Exam_Score}%</td>
-                  <td className="py-3 px-4 font-mono font-bold text-blue-600">{s.Overall_Score}%</td>
-                  <td className="py-3 px-4">
-                    <RiskBadge level={s.Risk_Level} size="sm" />
-                  </td>
-                  <td className="py-3 px-4 text-right">
+                </tr>
+              ) : studentsError ? (
+                <tr>
+                  <td colSpan={15} className="py-12 text-center text-slate-400">
+                    <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-rose-500" />
+                    <p className="font-semibold text-slate-800 text-xs">Failed to load student registry</p>
+                    <p className="text-[11px] text-rose-600 mt-0.5 max-w-md mx-auto">{studentsError}</p>
                     <button
-                      onClick={() => handleDeleteStudent(s.Student_ID, s.Name)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                      title="Delete student record"
+                      onClick={() => refreshStudents()}
+                      disabled={studentsLoading}
+                      className="mt-3 px-3.5 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-slate-800 cursor-pointer shadow-xs"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <RefreshCw className={`w-3 h-3 ${studentsLoading ? 'animate-spin' : ''}`} />
+                      <span>Retry Connection</span>
                     </button>
                   </td>
                 </tr>
-              ))}
+              ) : allStudents.length === 0 ? (
+                <tr>
+                  <td colSpan={15} className="py-12 text-center text-slate-400">
+                    <GraduationCap className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                    <p className="font-semibold text-slate-700 text-xs">No student records found in registry</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">The database student table currently has zero records. Use 'Add New Scholar' to enroll students.</p>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={15} className="py-12 text-center text-slate-400">
+                    <Search className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                    <p className="font-semibold text-slate-700 text-xs">No matching students found</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Try searching with a different name, student ID, or weak subject.</p>
+                  </td>
+                </tr>
+              ) : (
+                paginatedStudents.map((s) => (
+                  <tr key={s.Student_ID} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="py-3 px-4 font-mono font-bold text-slate-700">{s.Student_ID}</td>
+                    <td className="py-3 px-4 font-bold text-slate-900">{s.Name}</td>
+                    <td className="py-3 px-4 text-slate-500">{s.Age} / {s.Gender}</td>
+                    <td className="py-3 px-4 text-slate-600 font-medium">{s.Class_Grade}</td>
+                    <td className="py-3 px-4 font-mono font-semibold">
+                      <span className={s.Attendance_Percent < 75 ? 'text-rose-600 font-bold' : 'text-slate-800'}>
+                        {s.Attendance_Percent}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono">{s.Study_Hours_Per_Day} hrs</td>
+                    <td className="py-3 px-4 font-mono text-slate-600">
+                      {s.Assignment_Score}% / {s.Quiz_Score}%
+                    </td>
+                    <td className="py-3 px-4 font-mono">{s.Previous_Score}%</td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {s.Sleep_Hours}h / {s.Stress_Level}
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 font-medium">{s.Learning_Style}</td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-semibold text-[11px]">
+                        {s.Weak_Subject}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono font-semibold text-slate-800">{s.Exam_Score}%</td>
+                    <td className="py-3 px-4 font-mono font-bold text-blue-600">{s.Overall_Score}%</td>
+                    <td className="py-3 px-4">
+                      <RiskBadge level={s.Risk_Level} size="sm" />
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleSelectStudent(s.Student_ID)}
+                          className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs border border-indigo-200/60"
+                          title={`View dynamic student dashboard for ${s.Name} (${s.Student_ID})`}
+                        >
+                          <LayoutDashboard className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>View Dashboard</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStudent(s.Student_ID, s.Name)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Delete student record"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Navigation Footer */}
+        {filtered.length > 0 && (
+          <div className="px-5 py-3.5 bg-slate-50/80 border-t border-slate-200/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+            <div>
+              <span>
+                Showing <strong className="font-mono text-slate-900">{(currentPage - 1) * pageSize + 1}</strong> to{' '}
+                <strong className="font-mono text-slate-900">{Math.min(currentPage * pageSize, filtered.length)}</strong> of{' '}
+                <strong className="font-mono text-slate-900">{filtered.length}</strong> scholars
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center gap-1 font-semibold text-[11px]"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Previous</span>
+              </button>
+
+              <div className="flex items-center gap-1 px-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1)
+                  .map((p, idx, arr) => {
+                    const prevP = arr[idx - 1];
+                    const showEllipsis = prevP && p - prevP > 1;
+                    return (
+                      <React.Fragment key={p}>
+                        {showEllipsis && <span className="px-1 text-slate-400">…</span>}
+                        <button
+                          onClick={() => setCurrentPage(p)}
+                          className={`w-7 h-7 rounded-lg text-[11px] font-bold font-mono transition-colors cursor-pointer ${
+                            currentPage === p
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer flex items-center gap-1 font-semibold text-[11px]"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add Student Modal */}

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { StudentData, UserAccount, UserRole, UserProfileRow, CandidateStudent } from '../types';
-import { INITIAL_STUDENTS, INITIAL_USERS } from '../data/mockData';
 import {
   testSupabaseConnection,
   ConnectionTestResult,
@@ -93,7 +92,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [allStudents, setAllStudents] = useState<StudentData[]>(() => {
     const saved = localStorage.getItem('vidya_students');
-    return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      // Cleanse any stale mock data previously saved in localStorage
+      if (Array.isArray(parsed) && parsed.length > 0 && String(parsed[0]?.Student_ID).startsWith('STU-100')) {
+        localStorage.removeItem('vidya_students');
+        return [];
+      }
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      localStorage.removeItem('vidya_students');
+      return [];
+    }
   });
 
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(() => {
@@ -121,14 +132,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setStudentsError(null);
     try {
       const result = await fetchStudentsFromSupabase();
-      if (result.source === 'database' && result.data.length > 0) {
-        setAllStudents(result.data);
-      } else if (result.error) {
+      if (result.error) {
         setStudentsError(result.error);
-        // Preserves mock data fallback as guaranteed by fetchStudentsFromSupabase
+        // Strictly never fall back to mock data on error in production
+        setAllStudents([]);
+      } else {
+        setStudentsError(null);
+        setAllStudents(result.data || []);
       }
     } catch (err: any) {
-      setStudentsError(err?.message || 'Error loading students');
+      setStudentsError(err?.message || 'Error loading students from database.');
+      setAllStudents([]);
     } finally {
       setStudentsLoading(false);
     }
@@ -148,6 +162,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     client: any
   ): Promise<UserAccount> => {
     try {
+      // 1. Primary secure path: Query authenticated server endpoint using session bearer token.
+      // This bypasses client-side PostgreSQL RLS recursion while strictly verifying the caller JWT
+      // and checking public.user_profiles using the verified authUser.id (UUID).
+      try {
+        const token = await getActiveAuthTokenFromSupabase();
+        if (token) {
+          const res = await fetch(apiUrl('/api/auth/me'), {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const parsed = await parseApiResponse<{
+            success: boolean;
+            isProfileMissing: boolean;
+            user: UserAccount;
+          }>(res, '/api/auth/me');
+
+          if (parsed.ok && parsed.data?.success && parsed.data.user) {
+            const serverUser = parsed.data.user;
+            setUser(serverUser);
+            localStorage.setItem('vidya_user', JSON.stringify(serverUser));
+
+            if (serverUser.role === 'student') {
+              setSelectedStudentId(serverUser.studentId ? String(serverUser.studentId) : null);
+            } else {
+              setSelectedStudentId(null);
+            }
+            return serverUser;
+          }
+        }
+      } catch (endpointErr) {
+        console.warn('Backend /api/auth/me failed, falling back to direct client query:', endpointErr);
+      }
+
+      // 2. Fallback path: Direct PostgREST client query
       const { data: profile, error: profileErr } = await client
         .from('user_profiles')
         .select('*')
@@ -167,7 +217,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? actualEmail.split('@')[0]
           : actualName.toLowerCase().replace(/\s+/g, '');
 
-        const studentId = actualRole === 'student' ? (profile.student_id ?? null) : null;
+        const studentId =
+          actualRole === 'student' && profile.student_id !== null && profile.student_id !== undefined
+            ? Number(profile.student_id)
+            : null;
         const staffId = actualRole === 'teacher' ? (profile.staff_id ?? null) : null;
 
         const updatedAccount: UserAccount = {
@@ -191,8 +244,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return updatedAccount;
       } else {
-        // Profile row in public.user_profiles is MISSING for this authenticated user's UUID!
-        // Display clear safe profile-not-found / role pending state and never invent an admin role.
+        // Profile row in public.user_profiles is MISSING or could not be verified for this authenticated user's UUID!
         const missingAccount: UserAccount = {
           id: authUser.id,
           username: authUser.email ? authUser.email.split('@')[0] : '',
@@ -201,7 +253,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: 'pending',
           studentId: null,
           staffId: null,
-          isProfileMissing: true,
+          isProfileMissing: !profileErr,
+          errorMessage: profileErr ? profileErr.message : undefined,
         };
 
         setUser(missingAccount);
@@ -209,7 +262,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedStudentId(null);
         return missingAccount;
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Error querying user_profiles for UUID:', authUser.id, err);
       const fallbackAccount: UserAccount = {
         id: authUser.id,
@@ -220,6 +273,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         studentId: null,
         staffId: null,
         isProfileMissing: true,
+        errorMessage: err?.message,
       };
       setUser(fallbackAccount);
       return fallbackAccount;
@@ -232,8 +286,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsSupabaseConnected(res.success);
       if (res.success) {
         localStorage.setItem('vidya_supabase_connected', 'true');
-        refreshStudents();
       }
+      refreshStudents();
     });
 
     // Supabase Auth listener & immediate session sync

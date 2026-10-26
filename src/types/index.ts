@@ -12,6 +12,7 @@ export interface UserAccount {
   studentId?: string | number | null; // Links to StudentData if role === 'student' (mapped to integer student_id)
   staffId?: string | null; // Links to StaffData if role === 'teacher' (mapped to staff_id)
   isProfileMissing?: boolean; // True if matching public.user_profiles record was not found
+  errorMessage?: string; // Diagnostic error message if profile query encountered an issue
 }
 
 export interface UserProfileRow {

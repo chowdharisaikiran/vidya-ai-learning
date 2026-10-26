@@ -18,6 +18,7 @@ import {
   Database,
   ShieldCheck,
   UserCheck,
+  Settings,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'ai-recommendations', label: 'AI Recommendations', icon: Sparkles },
         { id: 'ai-prediction', label: 'AI Prediction', icon: BrainCircuit },
         { id: 'profile', label: 'Profile', icon: User },
+        { id: 'settings', label: 'Settings', icon: Settings },
       ];
     }
 
@@ -54,6 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'performance-analytics', label: 'Performance Analytics', icon: LineChart },
         { id: 'ai-prediction', label: 'AI Prediction', icon: BrainCircuit },
         { id: 'profile', label: 'Profile', icon: User },
+        { id: 'settings', label: 'Settings', icon: Settings },
       ];
     }
 
@@ -67,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'institution-analytics', label: 'Institution Analytics', icon: TrendingUp },
       { id: 'ai-prediction', label: 'AI Prediction', icon: Binary },
       { id: 'profile', label: 'Profile', icon: User },
+      { id: 'settings', label: 'Settings', icon: Settings },
     ];
   };
 

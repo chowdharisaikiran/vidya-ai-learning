@@ -168,6 +168,17 @@ WHERE id = '${user.id}';`
             </div>
           </div>
 
+          {/* Diagnostic Error Banner if RLS or Query Error occurred */}
+          {user?.errorMessage && (
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-1">
+              <div className="flex items-center gap-2 font-bold text-rose-900">
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                <span>Database Query Diagnostic</span>
+              </div>
+              <p className="text-rose-700 leading-relaxed font-mono text-[11px] break-all">{user.errorMessage}</p>
+            </div>
+          )}
+
           {/* Feedback banner */}
           {statusMessage && (
             <div

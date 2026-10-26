@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { VidyaLogo } from '../common/VidyaLogo';
-import { SupabaseConnectionModal } from '../SupabaseConnectionModal';
 import {
   LogOut,
   Bell,
@@ -9,7 +8,6 @@ import {
   GraduationCap,
   ShieldAlert,
   UserCheck,
-  Database,
   CheckCircle2,
 } from 'lucide-react';
 
@@ -31,7 +29,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
   } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
   const roleBadgeConfig = {
     student: {
@@ -146,29 +143,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
           )}
         </div>
 
-        {/* Right: Supabase Status, Notifications, Role Pill & User Dropdown */}
+        {/* Right: Notifications, Role Pill & User Dropdown */}
         <div className="flex items-center gap-2 sm:gap-2.5">
-          {/* Supabase Live Status Pill */}
-          <button
-            onClick={() => setShowSupabaseModal(true)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${
-              isSupabaseConnected
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300'
-                : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300'
-            }`}
-            title="Supabase Cloud Database Status · Click to view details and SQL tables"
-          >
-            <Database className={`w-3.5 h-3.5 ${isSupabaseConnected ? 'text-emerald-600' : 'text-amber-600'}`} />
-            <span className="hidden lg:inline text-[11px] font-bold">
-              {isSupabaseConnected ? 'Supabase Connected' : 'Supabase Setup'}
-            </span>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isSupabaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
-              }`}
-            />
-          </button>
-
           {/* Role badge */}
           <div
             className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${currentRoleBadge.bg} ${currentRoleBadge.text} ${currentRoleBadge.border}`}
@@ -297,12 +273,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
         </div>
       </div>
 
-      {/* Supabase Database Connection Modal */}
-      <SupabaseConnectionModal
-        isOpen={showSupabaseModal}
-        onClose={() => setShowSupabaseModal(false)}
-        onConnectionStatusChange={(connected) => setSupabaseConnected(connected)}
-      />
     </header>
   );
 };
