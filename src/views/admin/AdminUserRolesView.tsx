@@ -716,14 +716,17 @@ ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
                 </tr>
               ) : (
                 filteredProfiles.map((p) => {
-                  const roleConfig = {
+                  const roleConfig: Record<string, any> = {
+                    platform_owner: { label: 'Platform Owner', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', icon: ShieldAlert },
+                    institution_admin: { label: 'Inst Admin', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: ShieldAlert },
                     admin: { label: 'Admin', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: ShieldAlert },
                     teacher: { label: 'Teacher', bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: UserCheck },
                     student: { label: 'Student', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: GraduationCap },
                     pending: { label: 'Pending', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: Clock },
-                  }[p.role] || { label: p.role, bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: Users };
+                  };
+                  const selectedRoleConfig = roleConfig[p.role] || { label: p.role, bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: Users };
 
-                  const RoleIcon = roleConfig.icon;
+                  const RoleIcon = selectedRoleConfig.icon;
 
                   // Find mapped student or staff details
                   const linkedStudent = p.student_id ? students.find((s) => s.student_id === p.student_id) : null;

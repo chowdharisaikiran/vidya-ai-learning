@@ -35,8 +35,9 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
   // Weak subject breakdown calculated from live data
   const weakSubjectCounts: Record<string, number> = {};
   allStudents.forEach((s) => {
-    if (s.Weak_Subject) {
-      weakSubjectCounts[s.Weak_Subject] = (weakSubjectCounts[s.Weak_Subject] || 0) + 1;
+    const raw = s.Weak_Subject && s.Weak_Subject.trim();
+    if (raw && raw !== 'None' && raw !== 'Not assessed') {
+      weakSubjectCounts[raw] = (weakSubjectCounts[raw] || 0) + 1;
     }
   });
   const weakSubjectList = Object.entries(weakSubjectCounts)
@@ -47,7 +48,7 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
     }))
     .sort((a, b) => b.count - a.count);
 
-  const topWeak = weakSubjectList[0] || { subject: 'None recorded', count: 0, percent: 0 };
+  const topWeak = weakSubjectList.length > 0 ? weakSubjectList[0] : null;
 
   // Tutoring & Support distribution
   const tutoredCount = allStudents.filter((s) => s.Tutoring === 'Yes').length;
@@ -208,12 +209,25 @@ export const AdminInstitutionAnalyticsView: React.FC = () => {
             <Target className="w-5 h-5 text-indigo-600" />
             <h3 className="text-base font-bold text-slate-900">Curriculum Strategy Directives</h3>
           </div>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            <b>{topWeak.subject}</b> represents the primary academic bottleneck in the cohort, flagged as the weakest subject for <b>{topWeak.count} students ({topWeak.percent}%)</b>. Recommended institutional focus: targeted concept review sessions and structured peer study circles.
-          </p>
-          <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 text-xs text-indigo-900 font-medium">
-            Active curriculum review recommended for top friction subject: {topWeak.subject}.
-          </div>
+          {topWeak ? (
+            <>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                <b>{topWeak.subject}</b> represents the primary academic bottleneck in the cohort, flagged as the weakest subject for <b>{topWeak.count} students ({topWeak.percent}%)</b>. Recommended institutional focus: targeted concept review sessions and structured peer study circles.
+              </p>
+              <div className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 text-xs text-indigo-900 font-medium">
+                Active curriculum review recommended for top friction subject: {topWeak.subject}.
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Individual subject-level assessments have not yet been evaluated for the cohort. No single curriculum bottleneck is currently identified.
+              </p>
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-600 font-medium">
+                Cohort status: Subject-wise diagnostic assessment pending.
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

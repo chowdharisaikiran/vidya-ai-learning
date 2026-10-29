@@ -253,7 +253,12 @@ export const TeacherStudentsView: React.FC = () => {
                         <RiskBadge level={s.Risk_Level} />
                       </td>
                       <td className="py-3.5 px-4 text-slate-600">
-                        {s.Weak_Subject || 'Mathematics'}
+                        <span
+                          title="Suggested subject based on academic profile"
+                          className={`cursor-help ${s.Weak_Subject && s.Weak_Subject !== 'Not assessed' && s.Weak_Subject !== 'None' ? 'font-medium text-rose-700' : 'text-slate-400 italic'}`}
+                        >
+                          {s.Weak_Subject && s.Weak_Subject !== 'None' ? s.Weak_Subject : 'Not assessed'}
+                        </span>
                       </td>
                       <td className="py-3.5 px-5 text-right">
                         <button
@@ -306,7 +311,9 @@ export const TeacherStudentsView: React.FC = () => {
               </div>
               <div className="p-3 rounded-2xl bg-slate-50 border border-slate-100">
                 <span className="text-slate-400 font-medium">Focus Subject</span>
-                <p className="text-sm font-semibold text-slate-800 mt-1">{selectedStudent.Weak_Subject || 'Mathematics'}</p>
+                <p className={`text-sm font-semibold mt-1 ${selectedStudent.Weak_Subject && selectedStudent.Weak_Subject !== 'Not assessed' && selectedStudent.Weak_Subject !== 'None' ? 'text-rose-700' : 'text-slate-500 italic'}`}>
+                  {selectedStudent.Weak_Subject && selectedStudent.Weak_Subject !== 'None' ? selectedStudent.Weak_Subject : 'Not assessed'}
+                </p>
               </div>
             </div>
 

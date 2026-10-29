@@ -5,6 +5,7 @@ import type {
   RiskLevel,
   PerformanceLevel,
 } from '../types';
+import { normalizeWeakSubject } from '../utils/subjectUtils.ts';
 
 /**
  * VIDYA Machine Learning Inference Engine
@@ -222,10 +223,13 @@ export function calculateAcademicPrediction(input: MLPredictionInput): MLPredict
   if (Tutoring === 'Yes') protectiveFactors.push('Active Tutoring Mentorship');
   if (Sleep_Hours >= 7.5) protectiveFactors.push('Adequate Rest & Sleep');
 
+  const normalizedWeak = normalizeWeakSubject(input.Weak_Subject);
+  const weakFocusText = normalizedWeak !== 'Not assessed' ? normalizedWeak : 'core curriculum subjects';
+
   // Recommendation builder
   let recommendedAction = '';
   if (riskLevel === 'High') {
-    recommendedAction = `Immediate Tier-1 Intervention: Schedule structured remedial sessions in ${input.Weak_Subject || 'weak subjects'}, mandate minimum 80% attendance milestone, and adjust sleep routine to 7.5+ hrs.`;
+    recommendedAction = `Immediate Tier-1 Intervention: Schedule structured remedial sessions in ${weakFocusText}, mandate minimum 80% attendance milestone, and adjust sleep routine to 7.5+ hrs.`;
   } else if (riskLevel === 'Moderate') {
     recommendedAction = `Targeted Guidance: Reinforce weekly assignment review, add 1.0 hr daily structured revision with spaced repetition, and monitor stress levels before upcoming exams.`;
   } else {
@@ -238,7 +242,7 @@ export function calculateAcademicPrediction(input: MLPredictionInput): MLPredict
     riskLevel,
     riskProbability,
     performanceLevel,
-    identifiedWeakSubject: input.Weak_Subject || 'Mathematics',
+    identifiedWeakSubject: normalizedWeak,
     confidenceScore: 89,
     recommendedAction,
     featureContributions: contributions,

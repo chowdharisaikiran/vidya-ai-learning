@@ -179,13 +179,22 @@ export const StudentRecommendationsView: React.FC = () => {
               <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-md bg-white/10 text-slate-200 border border-white/10">
                 Style: {student.Learning_Style}
               </span>
-              <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-md bg-blue-500/20 text-blue-200 border border-blue-400/30">
-                Weak Subject: {student.Weak_Subject}
+              <span
+                title="Suggested subject based on academic profile"
+                className={`text-[11px] font-medium px-2.5 py-0.5 rounded-md border inline-flex items-center gap-1.5 cursor-help ${
+                  student.Weak_Subject && student.Weak_Subject !== 'Not assessed'
+                    ? 'bg-blue-500/20 text-blue-200 border-blue-400/30'
+                    : 'bg-white/10 text-slate-300 border-white/10'
+                }`}
+              >
+                Weak Subject: {student.Weak_Subject && student.Weak_Subject !== 'None' ? student.Weak_Subject : 'Not assessed'}
               </span>
             </div>
             <p className="text-sm text-slate-200 leading-relaxed font-normal">
               {plan?.summary ||
-                `${student.Name} is currently operating with a ${student.Risk_Level.toLowerCase()} academic risk profile. The highest return interventions target rebuilding fluency in ${student.Weak_Subject} with structured daily practice of ${student.Study_Hours_Per_Day} hours.`}
+                (student.Weak_Subject && student.Weak_Subject !== 'Not assessed'
+                  ? `${student.Name} is currently operating with a ${student.Risk_Level.toLowerCase()} academic risk profile. The highest return interventions target rebuilding fluency in ${student.Weak_Subject} with structured daily practice of ${student.Study_Hours_Per_Day} hours.`
+                  : `${student.Name} is currently operating with a ${student.Risk_Level.toLowerCase()} academic risk profile. Subject-level diagnostic assessment is currently pending. Recommended focus: maintaining structured daily study habits of ${student.Study_Hours_Per_Day} hours and regular attendance.`)}
             </p>
             {plan?.pedagogicalTip && (
               <div className="mt-3 text-xs font-medium text-slate-200 bg-white/5 p-3 rounded-xl border border-white/10 flex items-center gap-2.5">
@@ -355,7 +364,7 @@ export const StudentRecommendationsView: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-slate-900 tracking-tight">
-                  Targeted Subject Remediation: {student.Weak_Subject}
+                  Targeted Subject Remediation: {student.Weak_Subject && student.Weak_Subject !== 'Not assessed' ? student.Weak_Subject : 'Curriculum Focus'}
                 </h3>
                 <p className="text-xs text-slate-500 font-normal">Root-cause conceptual recovery path</p>
               </div>

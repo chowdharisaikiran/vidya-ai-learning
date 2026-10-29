@@ -7,6 +7,8 @@ import {
   fetchAllStaffRecords,
   fetchAllDatabaseStudents,
   fetchAllSubjects,
+  autoMatchFacultyAssignments,
+  bulkCreateFacultyAssignments,
   DatabaseFacultyAssignment,
   DatabaseStaffRow,
   DatabaseStudentRow,
@@ -59,6 +61,56 @@ export const AdminAssignmentsView: React.FC = () => {
   // Deletion confirmation
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Auto-Match state
+  const [showAutoMatchModal, setShowAutoMatchModal] = useState(false);
+  const [autoMatchResult, setAutoMatchResult] = useState<any>(null);
+  const [autoMatchLoading, setAutoMatchLoading] = useState(false);
+  const [executingAutoMatch, setExecutingAutoMatch] = useState(false);
+
+  const handleRunAutoMatch = async () => {
+    setAutoMatchLoading(true);
+    setError(null);
+    try {
+      const res = await autoMatchFacultyAssignments();
+      if (res.success) {
+        setAutoMatchResult(res);
+        setShowAutoMatchModal(true);
+      } else {
+        setError(res.error || 'Failed to generate automatic assignment matches.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Error running automatic matching.');
+    } finally {
+      setAutoMatchLoading(false);
+    }
+  };
+
+  const handleExecuteAutoMatch = async () => {
+    if (!autoMatchResult?.proposals || autoMatchResult.proposals.length === 0) return;
+    setExecutingAutoMatch(true);
+    try {
+      const payload = autoMatchResult.proposals.map((p: any) => ({
+        staff_id: p.staff_id,
+        student_id: p.student_id,
+        subject_id: p.subject_id,
+      }));
+      const res = await bulkCreateFacultyAssignments(payload);
+      if (res.success) {
+        setSuccessMessage(`Successfully auto-assigned ${res.successCount || payload.length} students based on weak subjects and risk levels! (${res.skippedCount || 0} skipped)`);
+        setShowAutoMatchModal(false);
+        setAutoMatchResult(null);
+        await loadData();
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } else {
+        setError(res.error || 'Failed to execute auto-assignments.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Error executing auto-assignments.');
+    } finally {
+      setExecutingAutoMatch(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -230,6 +282,14 @@ export const AdminAssignmentsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={handleRunAutoMatch}
+            disabled={autoMatchLoading}
+            className="px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm shadow-violet-500/20 cursor-pointer disabled:opacity-50"
+          >
+            <ShieldCheck className={`w-4 h-4 ${autoMatchLoading ? 'animate-spin' : ''}`} />
+            <span>{autoMatchLoading ? 'Analyzing...' : 'Auto-Match & Assign'}</span>
+          </button>
           <button
             onClick={() => setShowAssignModal(true)}
             className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm shadow-indigo-500/20 cursor-pointer"
@@ -683,6 +743,114 @@ export const AdminAssignmentsView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Match Preview Modal */}
+      {showAutoMatchModal && autoMatchResult && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 sm:p-8 space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-violet-100 text-violet-700 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                    Automatic Faculty Assignment Preview
+                  </h3>
+                  <p className="text-xs text-slate-500 font-normal">
+                    Matched based on student weak subjects, risk levels (High &gt; Med &gt; Low), and quiz performance.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAutoMatchModal(false)}
+                className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Students</span>
+                <span className="text-lg font-black text-slate-900 font-mono mt-0.5 block">{autoMatchResult.total_students}</span>
+              </div>
+              <div className="p-3 bg-violet-50 rounded-2xl border border-violet-200/80">
+                <span className="text-[10px] font-bold text-violet-600 uppercase tracking-wider block">Proposed Matches</span>
+                <span className="text-lg font-black text-violet-700 font-mono mt-0.5 block">{autoMatchResult.proposals?.length || 0}</span>
+              </div>
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/80">
+                <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Unmatched / Exceptions</span>
+                <span className="text-lg font-black text-amber-800 font-mono mt-0.5 block">{autoMatchResult.exceptions?.length || 0}</span>
+              </div>
+            </div>
+
+            {autoMatchResult.proposals?.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Proposed Assignments ({autoMatchResult.proposals.length})
+                </h4>
+                <div className="max-h-52 overflow-y-auto space-y-2 border border-slate-200 rounded-2xl p-3 bg-slate-50/50">
+                  {autoMatchResult.proposals.map((p: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-white rounded-xl border border-slate-200/60 text-xs">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-slate-900">
+                          Student #{p.student_id}: {p.student_name}
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                          <span>Weak Subject: <strong className="text-violet-700">{p.subject_name}</strong></span>
+                          <span>•</span>
+                          <span>Risk: <span className={`font-semibold ${p.risk_level === 'High' ? 'text-rose-600' : 'text-amber-600'}`}>{p.risk_level}</span></span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold text-indigo-700">{p.staff_name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">Faculty ID: {p.staff_id}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {autoMatchResult.exceptions?.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Unmatched Students / Exceptions ({autoMatchResult.exceptions.length})</span>
+                </h4>
+                <div className="max-h-36 overflow-y-auto space-y-1.5 border border-amber-200 rounded-2xl p-3 bg-amber-50/30 text-xs">
+                  {autoMatchResult.exceptions.map((ex: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between p-2 bg-white rounded-lg border border-amber-200/60 text-[11px]">
+                      <span className="font-semibold text-slate-900">Student #{ex.student_id}: {ex.name}</span>
+                      <span className="text-amber-700 font-medium">{ex.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAutoMatchModal(false)}
+                className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-xl cursor-pointer text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={executingAutoMatch || !autoMatchResult.proposals?.length}
+                onClick={handleExecuteAutoMatch}
+                className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-bold rounded-xl shadow-sm transition-colors cursor-pointer disabled:opacity-50 text-xs flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{executingAutoMatch ? 'Executing Assignments...' : `Confirm & Execute (${autoMatchResult.proposals?.length || 0})`}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

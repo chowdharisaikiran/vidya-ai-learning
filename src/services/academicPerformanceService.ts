@@ -1,6 +1,7 @@
 import { getSupabaseClient, getActiveAuthToken } from '../lib/supabase';
 import { apiUrl, parseApiResponse } from '../lib/apiConfig';
 import type { SubjectScore, PerformanceLevel } from '../types';
+import { normalizeWeakSubject } from '../utils/subjectUtils';
 
 /**
  * Confirmed columns in Supabase `academic_performance` table:
@@ -47,24 +48,25 @@ export interface StudentAcademicSummary {
 }
 
 /**
- * Standard known subject ID mappings (handles either textual subject names or numerical IDs)
+ * Verified institution subject ID mappings (from `subjects` table, CSE-DS department)
  */
 const SUBJECT_ID_MAP: Record<string, string> = {
-  '1': 'Mathematics',
-  '2': 'Physics',
-  '3': 'Chemistry',
-  '4': 'Computer Science',
-  '5': 'English',
-  'math': 'Mathematics',
-  'mathematics': 'Mathematics',
-  'phy': 'Physics',
-  'physics': 'Physics',
-  'chem': 'Chemistry',
-  'chemistry': 'Chemistry',
-  'cs': 'Computer Science',
-  'computer science': 'Computer Science',
-  'eng': 'English',
-  'english': 'English',
+  'sub001': 'Python Programming',
+  'sub002': 'Database Management Systems',
+  'sub003': 'Machine Learning',
+  'sub004': 'Data Structures',
+  'sub005': 'Statistics',
+  'sub006': 'Computer Networks',
+  'sub007': 'Web Technologies',
+  'sub008': 'Artificial Intelligence',
+  'python programming': 'Python Programming',
+  'database management systems': 'Database Management Systems',
+  'machine learning': 'Machine Learning',
+  'data structures': 'Data Structures',
+  'statistics': 'Statistics',
+  'computer networks': 'Computer Networks',
+  'web technologies': 'Web Technologies',
+  'artificial intelligence': 'Artificial Intelligence',
 };
 
 /**
@@ -122,7 +124,7 @@ export function mapRowsToSubjectScores(
       avgQuiz: 0,
       avgPrev: 0,
       avgExam: 0,
-      weakSubject: 'Mathematics',
+      weakSubject: 'Not assessed',
     };
   }
 
@@ -190,9 +192,16 @@ export function mapRowsToSubjectScores(
     ? Math.round(prevScores.reduce((a, b) => a + b, 0) / prevScores.length)
     : avgOverall;
 
-  // Identify weak subject (lowest overall score)
-  const sorted = [...subjects].sort((a, b) => a.overall - b.overall);
-  const weakSubject = sorted.length > 0 ? sorted[0].subject : 'Mathematics';
+  // Identify weak subject ONLY if genuine subject-wise marks exist across multiple distinct subjects
+  // Do not assume overall composite scores identify a specific weak subject
+  const hasMultipleSubjectWiseRows = subjects.length > 1 && subjects.some((s) => s.subject !== 'Academic Composite');
+  let weakSubject = 'Not assessed';
+  if (hasMultipleSubjectWiseRows) {
+    const sorted = [...subjects].sort((a, b) => a.overall - b.overall);
+    if (sorted.length > 0) {
+      weakSubject = normalizeWeakSubject(sorted[0].subject);
+    }
+  }
 
   return {
     subjects,

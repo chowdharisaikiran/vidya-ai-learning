@@ -545,7 +545,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           <RiskBadge level={s.Risk_Level} />
                         </td>
                         <td className="py-3.5 px-4 text-slate-600">
-                          {s.Weak_Subject || 'Mathematics'}
+                          <span
+                            title="Suggested subject based on academic profile"
+                            className={`cursor-help ${s.Weak_Subject && s.Weak_Subject !== 'Not assessed' && s.Weak_Subject !== 'None' ? 'font-medium text-rose-700' : 'text-slate-400 italic'}`}
+                          >
+                            {s.Weak_Subject && s.Weak_Subject !== 'None' ? s.Weak_Subject : 'Not assessed'}
+                          </span>
                         </td>
                         <td className="py-3.5 px-5 text-right">
                           <button

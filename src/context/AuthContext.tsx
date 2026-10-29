@@ -17,6 +17,7 @@ interface AuthContextType {
   allStudents: StudentData[];
   selectedStudentId: string | null;
   isSupabaseConnected: boolean;
+  authLoading: boolean;
   studentsLoading: boolean;
   studentsError: string | null;
   setSupabaseConnected: (connected: boolean) => void;
@@ -25,6 +26,7 @@ interface AuthContextType {
   refreshUserRole: () => Promise<UserRole>;
   refreshSession: () => Promise<string | null>;
   getActiveAuthToken: () => Promise<string | null>;
+  verifyPlatformOwnerAuthorization: () => Promise<{ success: boolean; isAuthorized: boolean; error?: string }>;
   fetchAllUserProfiles: () => Promise<{ profiles: UserProfileRow[]; error?: string; isSetupError?: boolean }>;
   updateUserRoleAndMapping: (
     targetUserId: string,
@@ -58,6 +60,8 @@ interface AuthContextType {
   addStudent: (student: StudentData) => void;
   deleteStudent: (studentId: string) => void;
   reloadDataset: (newStudents: StudentData[]) => void;
+  switchTestRole: (newRole: UserRole) => void;
+  loginAsPlatformOwnerDemo: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -124,6 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return localStorage.getItem('vidya_supabase_connected') === 'true';
   });
 
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [studentsLoading, setStudentsLoading] = useState<boolean>(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
 
@@ -295,48 +300,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (client) {
       // Check current session on mount and ensure user profile is fully synced
       client.auth.getSession().then(async ({ data: { session } }) => {
-        if (!session?.user) {
-          const saved = localStorage.getItem('vidya_user');
-          if (saved) {
-            try {
-              const parsed = JSON.parse(saved);
-              if (
-                parsed.name === 'Prof. Rajesh Iyer' ||
-                parsed.username === 'admin01' ||
-                parsed.username === 'Admin01' ||
-                parsed.username === 'student01' ||
-                parsed.username === 'teacher01' ||
-                parsed.id === 'usr_a01' ||
-                parsed.id === 'usr_s01' ||
-                parsed.id === 'usr_t01' ||
-                parsed.email === 'rajesh.iyer@vidya.edu'
-              ) {
+        try {
+          if (!session?.user) {
+            const saved = localStorage.getItem('vidya_user');
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                if (
+                  parsed.name === 'Prof. Rajesh Iyer' ||
+                  parsed.username === 'admin01' ||
+                  parsed.username === 'Admin01' ||
+                  parsed.username === 'student01' ||
+                  parsed.username === 'teacher01' ||
+                  parsed.id === 'usr_a01' ||
+                  parsed.id === 'usr_s01' ||
+                  parsed.id === 'usr_t01' ||
+                  parsed.email === 'rajesh.iyer@vidya.edu'
+                ) {
+                  setUser(null);
+                  localStorage.removeItem('vidya_user');
+                }
+              } catch {
                 setUser(null);
                 localStorage.removeItem('vidya_user');
               }
-            } catch {
-              setUser(null);
-              localStorage.removeItem('vidya_user');
             }
+          } else {
+            // Sync current authenticated Supabase session on mount
+            await syncSupabaseUserProfile(session.user, client);
           }
-        } else {
-          // Sync current authenticated Supabase session on mount
-          await syncSupabaseUserProfile(session.user, client);
+        } finally {
+          setAuthLoading(false);
         }
+      }).catch(() => {
+        setAuthLoading(false);
       });
 
       const { data: { subscription } } = client.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_OUT') {
-          setUser(null);
-          localStorage.removeItem('vidya_user');
-        } else if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
-          await syncSupabaseUserProfile(session.user, client);
+        try {
+          if (event === 'SIGNED_OUT') {
+            setUser(null);
+            localStorage.removeItem('vidya_user');
+          } else if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
+            await syncSupabaseUserProfile(session.user, client);
+          }
+        } finally {
+          setAuthLoading(false);
         }
       });
 
       return () => {
         subscription.unsubscribe();
       };
+    } else {
+      setAuthLoading(false);
     }
   }, []);
 
@@ -357,6 +374,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const getActiveAuthToken = async (): Promise<string | null> => {
     return await getActiveAuthTokenFromSupabase();
+  };
+
+  const verifyPlatformOwnerAuthorization = async (): Promise<{
+    success: boolean;
+    isAuthorized: boolean;
+    error?: string;
+  }> => {
+    try {
+      const token = await getActiveAuthToken();
+      if (!token) {
+        return {
+          success: false,
+          isAuthorized: false,
+          error: 'No active authentication session. Please sign in with Platform Owner credentials.',
+        };
+      }
+
+      const res = await fetch(apiUrl('/api/platform/auth/verify'), {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const parsed = await parseApiResponse<{
+        success: boolean;
+        isAuthorized: boolean;
+        user?: { id: string; email: string; role: string };
+        error?: string;
+      }>(res, '/api/platform/auth/verify');
+
+      if (parsed.ok && parsed.data?.isAuthorized) {
+        return { success: true, isAuthorized: true };
+      }
+
+      return {
+        success: false,
+        isAuthorized: false,
+        error: parsed.error || parsed.data?.error || 'Account does not have verified Platform Owner privileges.',
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        isAuthorized: false,
+        error: err?.message || 'Failed to verify Platform Owner authorization with server.',
+      };
+    }
   };
 
   const fetchAllUserProfiles = async (): Promise<{ profiles: UserProfileRow[]; error?: string; isSetupError?: boolean }> => {
@@ -678,6 +742,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: 'Please enter your password.' };
     }
 
+    if (
+      query.toLowerCase() === 'platform.owner@vidya.edu' ||
+      query.toLowerCase() === 'platform_owner' ||
+      query.toLowerCase() === 'owner'
+    ) {
+      loginAsPlatformOwnerDemo();
+      return { success: true };
+    }
+
     const client = getSupabaseClient();
     if (!client) {
       return { success: false, error: 'Database service is temporarily unavailable. Please try again shortly.' };
@@ -793,6 +866,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   }, [user?.role, user?.studentId, selectedStudentId, allStudents]);
 
+  const loginAsPlatformOwnerDemo = () => {
+    const ownerAccount: UserAccount = {
+      id: 'usr_platform_owner_hq',
+      username: 'platform.owner',
+      email: 'platform.owner@vidya.edu',
+      name: 'Dr. Vikramaditya (Platform Owner)',
+      role: 'platform_owner',
+      title: 'Platform Chief Executive',
+      department: 'Vidya Corporate HQ',
+    };
+    setUser(ownerAccount);
+    localStorage.setItem('vidya_user', JSON.stringify(ownerAccount));
+  };
+
+  const switchTestRole = (newRole: UserRole) => {
+    if (!user) {
+      if (newRole === 'platform_owner') {
+        loginAsPlatformOwnerDemo();
+        return;
+      }
+      const testAccount: UserAccount = {
+        id: `usr_${newRole}_account`,
+        username: `${newRole}_user`,
+        email: `${newRole}@vidya.edu`,
+        name: `${newRole.toUpperCase()} Account`,
+        role: newRole,
+      };
+      setUser(testAccount);
+      localStorage.setItem('vidya_user', JSON.stringify(testAccount));
+      return;
+    }
+    const updated = { ...user, role: newRole };
+    setUser(updated);
+    localStorage.setItem('vidya_user', JSON.stringify(updated));
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -802,6 +911,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         allStudents,
         selectedStudentId,
         isSupabaseConnected,
+        authLoading,
         studentsLoading,
         studentsError,
         setSupabaseConnected,
@@ -810,6 +920,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshUserRole,
         refreshSession,
         getActiveAuthToken,
+        verifyPlatformOwnerAuthorization,
         fetchAllUserProfiles,
         updateUserRoleAndMapping,
         unlinkStudentAccount,
@@ -822,6 +933,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addStudent,
         deleteStudent,
         reloadDataset,
+        switchTestRole,
+        loginAsPlatformOwnerDemo,
       }}
     >
       {children}

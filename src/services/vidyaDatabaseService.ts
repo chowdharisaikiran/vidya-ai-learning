@@ -729,3 +729,40 @@ export async function fetchAdminStudentDashboardRecords(
   }
 }
 
+export async function autoMatchFacultyAssignments(authToken?: string): Promise<{ success: boolean; total_students?: number; already_assigned?: number; proposals?: any[]; exceptions?: any[]; error?: string }> {
+  const activeToken = await getActiveAuthToken(authToken);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+    const res = await fetch(apiUrl('/api/admin/assignments/auto-match'), { method: 'POST', headers });
+    const parsed = await parseApiResponse<{ success: boolean; total_students: number; already_assigned: number; proposals: any[]; exceptions: any[] }>(res, 'POST /api/admin/assignments/auto-match');
+    if (parsed.ok && parsed.data?.success) {
+      return parsed.data;
+    }
+    return { success: false, error: parsed.error || 'Failed to auto-match assignments.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error during auto-matching.' };
+  }
+}
+
+export async function bulkCreateFacultyAssignments(assignments: { staff_id: string; student_id: number; subject_id?: string | null }[], authToken?: string): Promise<{ success: boolean; successCount?: number; skippedCount?: number; failedCount?: number; error?: string }> {
+  const activeToken = await getActiveAuthToken(authToken);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+    const res = await fetch(apiUrl('/api/admin/assignments/bulk'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ assignments }),
+    });
+    const parsed = await parseApiResponse<{ success: boolean; successCount: number; skippedCount: number; failedCount: number }>(res, 'POST /api/admin/assignments/bulk');
+    if (parsed.ok && parsed.data?.success) {
+      return parsed.data;
+    }
+    return { success: false, error: parsed.error || 'Failed to execute bulk assignment.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error executing bulk assignment.' };
+  }
+}
+
+

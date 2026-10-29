@@ -1,0 +1,28 @@
+{
+  "institutionId": "INST-VIDYA-01",
+  "institutionName": "Vidya Institute of Technology",
+  "institutionCode": "VIDYA-MAIN",
+  "plan": "Enterprise",
+  "status": "Active",
+  "billingCycle": "Yearly",
+  "amount": 1199990,
+  "currency": "INR",
+  "startDate": "2024-06-15T00:00:00Z",
+  "renewalDate": "2027-06-15T00:00:00Z",
+  "studentLimit": 2500,
+  "activeStudents": 297,
+  "autoRenew": true,
+  "history": [
+    {
+      "id": "HIST-001",
+      "date": "2024-06-15T09:00:00Z",
+      "action": "Initial Enterprise Contract",
+      "previousPlan": "None",
+      "newPlan": "Enterprise",
+      "amount": 1199990,
+      "billingCycle": "Yearly",
+      "status": "Active",
+      "note": "3-year founding partner contract initialized and verified."
+    }
+  ]
+}

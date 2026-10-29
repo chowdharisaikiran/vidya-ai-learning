@@ -29,6 +29,7 @@ import {
   Layers,
   Search,
   Settings,
+  CreditCard,
 } from 'lucide-react';
 import { apiUrl } from '../../lib/apiConfig';
 import {
@@ -247,7 +248,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           <span className="font-semibold text-slate-700">Administrative Navigation</span>
           <span>Core Registries & Governance</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           <button
             onClick={() => onNavigate('students')}
             className="p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/60 border border-slate-200/70 hover:border-indigo-200 text-left transition-colors cursor-pointer group"
@@ -342,6 +343,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <div>
                 <p className="text-xs font-semibold text-slate-900 group-hover:text-indigo-900">User Roles</p>
                 <p className="text-[10.5px] text-slate-500">Access control</p>
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => onNavigate('subscription')}
+            className="p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/60 border border-slate-200/70 hover:border-indigo-200 text-left transition-colors cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                <CreditCard className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-900 group-hover:text-indigo-900">Subscription</p>
+                <p className="text-[10.5px] text-slate-500">Plans & quotas</p>
               </div>
             </div>
           </button>

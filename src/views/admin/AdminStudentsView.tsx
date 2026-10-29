@@ -107,7 +107,7 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
     Tutoring: 'No' as const,
     Extracurricular_Activity: 'Yes' as const,
     Stress_Level: 'Medium' as const,
-    Weak_Subject: 'Mathematics',
+    Weak_Subject: 'Not assessed',
   });
 
   // Import Modal State
@@ -119,7 +119,7 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
     const matchesSearch =
       s.Name.toLowerCase().includes(search.toLowerCase()) ||
       s.Student_ID.toLowerCase().includes(search.toLowerCase()) ||
-      s.Weak_Subject.toLowerCase().includes(search.toLowerCase());
+      (s.Weak_Subject ? s.Weak_Subject.toLowerCase().includes(search.toLowerCase()) : false);
     const matchesRisk = riskFilter === 'all' || s.Risk_Level === riskFilter;
     return matchesSearch && matchesRisk;
   });
@@ -513,14 +513,23 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
                     <td className="py-3 px-4 font-mono text-slate-600">
                       {s.Assignment_Score}% / {s.Quiz_Score}%
                     </td>
-                    <td className="py-3 px-4 font-mono">{s.Previous_Score}%</td>
+                    <td className="py-3 px-4 font-mono">
+                      {s.Previous_Score !== undefined && s.Previous_Score !== null && s.Previous_Score > 0 ? `${s.Previous_Score}%` : <span className="text-slate-400 italic">Not available</span>}
+                    </td>
                     <td className="py-3 px-4 text-slate-600">
                       {s.Sleep_Hours}h / {s.Stress_Level}
                     </td>
                     <td className="py-3 px-4 text-slate-600 font-medium">{s.Learning_Style}</td>
                     <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-semibold text-[11px]">
-                        {s.Weak_Subject}
+                      <span
+                        title="Suggested subject based on academic profile"
+                        className={`inline-block px-2 py-0.5 rounded-md font-semibold text-[11px] cursor-help ${
+                          s.Weak_Subject && s.Weak_Subject !== 'Not assessed' && s.Weak_Subject !== 'None'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200/60'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200/60'
+                        }`}
+                      >
+                        {s.Weak_Subject && s.Weak_Subject !== 'None' ? s.Weak_Subject : 'Not assessed'}
                       </span>
                     </td>
                     <td className="py-3 px-4 font-mono font-semibold text-slate-800">{s.Exam_Score}%</td>
@@ -728,11 +737,15 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
                     onChange={(e) => setFormData({ ...formData, Weak_Subject: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
                   >
-                    <option value="Mathematics">Mathematics</option>
-                    <option value="Physics">Physics</option>
-                    <option value="Chemistry">Chemistry</option>
-                    <option value="Computer Science">Computer Science</option>
-                    <option value="English">English</option>
+                    <option value="Not assessed">Not assessed</option>
+                    <option value="Python Programming">Python Programming</option>
+                    <option value="Database Management Systems">Database Management Systems</option>
+                    <option value="Machine Learning">Machine Learning</option>
+                    <option value="Data Structures">Data Structures</option>
+                    <option value="Statistics">Statistics</option>
+                    <option value="Computer Networks">Computer Networks</option>
+                    <option value="Web Technologies">Web Technologies</option>
+                    <option value="Artificial Intelligence">Artificial Intelligence</option>
                   </select>
                 </div>
               </div>
@@ -867,7 +880,7 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
                   <textarea
                     rows={8}
                     required
-                    placeholder={`[\n  {\n    "Student_ID": "STU-5001",\n    "Name": "Kavita Rao",\n    "Attendance_Percent": 89,\n    "Study_Hours_Per_Day": 4.5,\n    "Overall_Score": 86,\n    "Weak_Subject": "Physics"\n  }\n]`}
+                    placeholder={`[\n  {\n    "Student_ID": "STU-5001",\n    "Name": "Kavita Rao",\n    "Attendance_Percent": 89,\n    "Study_Hours_Per_Day": 4.5,\n    "Overall_Score": 86,\n    "Weak_Subject": "Python Programming"\n  }\n]`}
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
                     className="w-full p-3 font-mono text-[11px] bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500"

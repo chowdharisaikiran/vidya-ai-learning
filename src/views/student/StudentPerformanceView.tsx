@@ -33,7 +33,9 @@ import { UnlinkedStudentCard } from '../../components/common/UnlinkedStudentCard
 
 export const StudentPerformanceView: React.FC = () => {
   const { student, user } = useAuth();
-  const [selectedSubject, setSelectedSubject] = useState<string>(student?.Weak_Subject || 'Physics');
+  const [selectedSubject, setSelectedSubject] = useState<string>(
+    student?.Subjects?.[0]?.subject || 'Python Programming'
+  );
   
   // Database academic_performance state
   const [dbPerformance, setDbPerformance] = useState<{
@@ -48,7 +50,7 @@ export const StudentPerformanceView: React.FC = () => {
     subjects: student?.Subjects || [],
     overallScore: student?.Overall_Score || 0,
     performanceLevel: student?.Performance_Level || 'Average',
-    weakSubject: student?.Weak_Subject || 'Mathematics',
+    weakSubject: student?.Weak_Subject && student.Weak_Subject !== 'None' ? student.Weak_Subject : 'Not assessed',
     source: 'fallback',
     loading: false,
     error: null,
@@ -230,7 +232,11 @@ export const StudentPerformanceView: React.FC = () => {
       {/* Subject Score Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         {activeSubjects.map((sub: any) => {
-          const isWeak = sub.subject.toLowerCase() === activeWeakSubject.toLowerCase();
+          const isWeak = Boolean(
+            activeWeakSubject &&
+            activeWeakSubject !== 'Not assessed' &&
+            sub.subject.toLowerCase() === activeWeakSubject.toLowerCase()
+          );
           const isSelected = sub.subject === selectedSubject;
 
           return (
@@ -300,7 +306,11 @@ export const StudentPerformanceView: React.FC = () => {
               </p>
             </div>
 
-            {subjectData.subject === activeWeakSubject && (
+            {Boolean(
+              activeWeakSubject &&
+              activeWeakSubject !== 'Not assessed' &&
+              subjectData.subject.toLowerCase() === activeWeakSubject.toLowerCase()
+            ) && (
               <div className="flex items-center gap-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">
                 <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
                 <span>Identified as your Primary Weak Subject. Focus on weekly remedial problem sets.</span>

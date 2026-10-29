@@ -29,6 +29,7 @@ import {
   Activity,
   ShieldAlert,
   BrainCircuit,
+  CreditCard,
 } from 'lucide-react';
 import { AdminPredictionView } from './AdminPredictionView';
 
@@ -248,6 +249,15 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({ onNavigate
                 <Key className="w-3.5 h-3.5 text-slate-500" />
                 <span>Configure Credentials</span>
               </button>
+              {onNavigate && (
+                <button
+                  onClick={() => onNavigate('subscription')}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                >
+                  <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Subscription & Plans</span>
+                </button>
+              )}
             </>
           )}
         </div>

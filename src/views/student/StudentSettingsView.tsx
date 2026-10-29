@@ -74,7 +74,7 @@ export const StudentSettingsView: React.FC<StudentSettingsViewProps> = ({ onNavi
       Tutoring: tutoring,
       Internet_Access: student?.Internet_Access || 'Yes',
       Stress_Level: stressLevel,
-      Weak_Subject: student?.Weak_Subject || 'Mathematics',
+      Weak_Subject: student?.Weak_Subject && student.Weak_Subject !== 'None' ? student.Weak_Subject : 'Not assessed',
     });
   }, [attendance, studyHours, previousScore, sleepHours, motivationLevel, tutoring, stressLevel, student]);
 

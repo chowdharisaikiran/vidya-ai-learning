@@ -2,6 +2,7 @@ import { getSupabaseClient } from '../lib/supabase';
 import type { StudentData } from '../types';
 import { INITIAL_STUDENTS } from '../data/mockData';
 import { apiUrl, parseApiResponse } from '../lib/apiConfig';
+import { normalizeWeakSubject, getDemoWeakSubject } from '../utils/subjectUtils';
 
 /**
  * Confirmed columns present in Supabase `students` table:
@@ -30,6 +31,7 @@ export interface SupabaseStudentRow {
   extracurricular_activity?: string | null;
   stress_level?: string | null;
   weak_subject?: string | null;
+  weak_subject_label?: string | null;
   exam_score?: number | null;
   overall_score?: number | null;
   performance_level?: string | null;
@@ -114,7 +116,13 @@ export function mapSupabaseRowToStudentData(
   }
 
   // When a student exists in Supabase DB without a mock template,
-  // map actual columns and provide honest baseline indicators marked as pending assessment
+  // map actual columns and provide deterministic demo weak subject when quiz score is valid
+  const normWeak = normalizeWeakSubject(row.weak_subject);
+  const quizSc = typeof row.quiz_score === 'number' ? row.quiz_score : null;
+  const demoRes = getDemoWeakSubject(rawId, quizSc);
+  const finalWeak = normWeak !== 'Not assessed' ? normWeak : demoRes.subject;
+  const finalLabel = row.weak_subject_label || (normWeak !== 'Not assessed' ? 'Verified weak subject' : demoRes.label);
+
   return {
     Student_ID: rawId,
     Name: name,
@@ -123,39 +131,28 @@ export function mapSupabaseRowToStudentData(
     Gender: gender,
     Education_Level: 'Undergraduate',
     Class_Grade: classGrade,
-    Attendance_Percent: typeof row.attendance_percent === 'number' ? row.attendance_percent : 85,
-    Study_Hours_Per_Day: typeof row.study_hours_per_day === 'number' ? row.study_hours_per_day : 3.5,
-    Assignment_Score: typeof row.assignment_score === 'number' ? row.assignment_score : 75,
-    Quiz_Score: typeof row.quiz_score === 'number' ? row.quiz_score : 75,
-    Previous_Score: typeof row.previous_score === 'number' ? row.previous_score : 75,
-    Sleep_Hours: typeof row.sleep_hours === 'number' ? row.sleep_hours : 7.0,
-    Motivation_Level: (row.motivation_level as any) || 'Medium',
-    Learning_Style: (row.learning_style as any) || 'Visual',
-    Internet_Access: (row.internet_access as any) || 'Yes',
-    Parental_Support: (row.parental_support as any) || 'Medium',
-    Tutoring: (row.tutoring as any) || 'No',
-    Extracurricular_Activity: (row.extracurricular_activity as any) || 'Yes',
-    Stress_Level: (row.stress_level as any) || 'Medium',
-    Weak_Subject: row.weak_subject || 'Mathematics',
-    Exam_Score: typeof row.exam_score === 'number' ? row.exam_score : 75,
-    Overall_Score: typeof row.overall_score === 'number' ? row.overall_score : 75,
-    Performance_Level: (row.performance_level as any) || 'Average',
-    Risk_Level: (row.risk_level as any) || 'Low',
+    Attendance_Percent: typeof row.attendance_percent === 'number' ? row.attendance_percent : 0,
+    Study_Hours_Per_Day: typeof row.study_hours_per_day === 'number' ? row.study_hours_per_day : 0,
+    Assignment_Score: typeof row.assignment_score === 'number' ? row.assignment_score : 0,
+    Quiz_Score: typeof row.quiz_score === 'number' ? row.quiz_score : 0,
+    Previous_Score: typeof row.previous_score === 'number' ? row.previous_score : 0,
+    Sleep_Hours: typeof row.sleep_hours === 'number' ? row.sleep_hours : 0,
+    Motivation_Level: (row.motivation_level as any) || 'Not assessed',
+    Learning_Style: (row.learning_style as any) || 'Not assessed',
+    Internet_Access: (row.internet_access as any) || 'Not available',
+    Parental_Support: (row.parental_support as any) || 'Not assessed',
+    Tutoring: (row.tutoring as any) || 'Not available',
+    Extracurricular_Activity: (row.extracurricular_activity as any) || 'Not available',
+    Stress_Level: (row.stress_level as any) || 'Not assessed',
+    Weak_Subject: finalWeak,
+    Weak_Subject_Label: finalLabel,
+    Exam_Score: typeof row.exam_score === 'number' ? row.exam_score : 0,
+    Overall_Score: typeof row.overall_score === 'number' ? row.overall_score : 0,
+    Performance_Level: (row.performance_level as any) || 'Not assessed',
+    Risk_Level: (row.risk_level as any) || 'Insufficient data',
     Recommended_Action: 'Supabase record verified: Diagnostic assessment pending.',
-    Subjects: [
-      { subject: 'Mathematics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-      { subject: 'Physics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-      { subject: 'Chemistry', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-      { subject: 'Computer Science', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-      { subject: 'English', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-    ],
-    History: [
-      { month: 'Oct', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
-      { month: 'Nov', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
-      { month: 'Dec', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
-      { month: 'Jan', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
-      { month: 'Feb', quizScore: 75, assignmentScore: 75, overallScore: 75, attendance: 85 },
-    ],
+    Subjects: [],
+    History: [],
     Intervention_Notes: [`Verified record from database (ID: ${rawId})`],
     Last_Updated: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     isLiveDatabaseRecord: true,

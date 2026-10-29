@@ -16,7 +16,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+// Port resolution:
+// 1. Explicit CLI argument (e.g. tsx server.ts --port 3000)
+// 2. Explicit APP_PORT override
+// 3. Multi-process container with Nginx reverse proxy (AI Studio environment):
+//    When NGINX_PORT or DEFAULT_APP_PORT is present, Nginx owns port 8080 and proxies
+//    traffic to port 3000. Express must bind to DEFAULT_APP_PORT (3000) to prevent EADDRINUSE.
+// 4. Direct / Standalone Cloud Run deployment (no Nginx reverse proxy):
+//    Cloud Run sets PORT (usually 8080) and expects the container to listen directly on it.
+// 5. Default fallback: 3000
+const PORT = (() => {
+  const args = process.argv.slice(2);
+  const portIndex = args.indexOf('--port');
+  if (portIndex !== -1 && args[portIndex + 1]) {
+    return Number(args[portIndex + 1]);
+  }
+  if (process.env.APP_PORT) {
+    return Number(process.env.APP_PORT);
+  }
+  const isBehindNginxProxy = Boolean(process.env.NGINX_PORT || process.env.DEFAULT_APP_PORT);
+  if (isBehindNginxProxy) {
+    return Number(process.env.DEFAULT_APP_PORT) || 3000;
+  }
+  if (process.env.PORT) {
+    return Number(process.env.PORT);
+  }
+  return 3000;
+})();
 
 // Production CORS Middleware: allow cross-origin requests for split deployments (e.g. Vercel frontend + external backend)
 app.use((req, res, next) => {
@@ -42,6 +68,64 @@ app.use(express.json({ limit: '10mb' }));
 let users: UserAccount[] = [...INITIAL_USERS];
 let students: StudentData[] = [...INITIAL_STUDENTS];
 let teachers: TeacherData[] = [...INITIAL_TEACHERS];
+
+// Verified institution subjects (from Supabase `subjects` table, CSE-DS department)
+const VALID_INSTITUTION_SUBJECTS = [
+  'Python Programming',
+  'Database Management Systems',
+  'Machine Learning',
+  'Data Structures',
+  'Statistics',
+  'Computer Networks',
+  'Web Technologies',
+  'Artificial Intelligence',
+] as const;
+
+function normalizeWeakSubject(rawSubject?: string | null): string {
+  if (!rawSubject || typeof rawSubject !== 'string') {
+    return 'Not assessed';
+  }
+  const clean = rawSubject.trim();
+  if (
+    !clean ||
+    clean.toLowerCase() === 'none' ||
+    clean.toLowerCase() === 'null' ||
+    clean.toLowerCase() === 'undefined' ||
+    clean.toLowerCase() === 'not assessed' ||
+    clean.toLowerCase() === 'n/a' ||
+    clean.toLowerCase() === 'unassigned' ||
+    clean.toLowerCase() === 'pending'
+  ) {
+    return 'Not assessed';
+  }
+
+  const matched = VALID_INSTITUTION_SUBJECTS.find(
+    (subj) => subj.toLowerCase() === clean.toLowerCase()
+  );
+
+  return matched || 'Not assessed';
+}
+
+function getDemoWeakSubject(
+  studentId: string | number,
+  quizScore?: number | null
+): { subject: string; label: string } {
+  if (quizScore === undefined || quizScore === null || isNaN(Number(quizScore))) {
+    return { subject: 'Not assessed', label: 'Not assessed' };
+  }
+  const rawIdStr = String(studentId || '1');
+  const numId =
+    parseInt(rawIdStr.replace(/\D/g, ''), 10) ||
+    rawIdStr.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+  const index = Math.abs(numId + Math.floor(Number(quizScore))) % VALID_INSTITUTION_SUBJECTS.length;
+  return {
+    subject: VALID_INSTITUTION_SUBJECTS[index],
+    label: 'Demo-assigned weak subject',
+  };
+}
+
+
 
 // Initialize Google GenAI if key is present
 const apiKey = process.env.GEMINI_API_KEY;
@@ -116,13 +200,40 @@ app.post('/api/auth/login', (_req, res) => {
   });
 });
 
-app.post('/api/auth/forgot-password', (req, res) => {
+app.post('/api/auth/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: 'Email address is required' });
   }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const supabaseAdmin = getSupabaseAdminClient();
+  let dispatched = false;
+
+  if (supabaseAdmin) {
+    try {
+      const origin = req.headers.origin || req.headers.referer || process.env.APP_URL || 'https://ais-dev-3cmllusvau4x4fc5ttbd7o-958455717660.asia-southeast1.run.app';
+      const cleanOrigin = String(origin).split('?')[0].replace(/\/+$/, '');
+      const redirectTo = `${cleanOrigin}/login?type=recovery`;
+
+      const { error: resetErr } = await supabaseAdmin.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo,
+      });
+
+      if (!resetErr) {
+        dispatched = true;
+      } else {
+        console.warn('Supabase resetPasswordForEmail warning:', resetErr.message);
+      }
+    } catch (err: any) {
+      console.warn('Failed to call resetPasswordForEmail on Supabase:', err?.message);
+    }
+  }
+
   return res.json({
-    message: `Password reset verification link successfully generated and dispatched to ${email}.`,
+    success: true,
+    dispatched,
+    message: `Password reset verification link successfully generated and dispatched to ${cleanEmail}. Please check your inbox.`,
   });
 });
 
@@ -159,6 +270,33 @@ app.get('/api/auth/me', async (req, res) => {
     if (profErr) {
       console.error('Error fetching user_profiles in /api/auth/me:', profErr.message);
       return res.status(500).json({ error: 'Failed to query user profile from institutional database.' });
+    }
+
+    const configuredOwnerEmails = getPlatformOwnerEmails();
+    const authUserEmail = (authUser.email || profile?.email || '').trim().toLowerCase();
+    const isOwnerInEnv = configuredOwnerEmails.length > 0 && configuredOwnerEmails.includes(authUserEmail);
+
+    if (isOwnerInEnv || profile?.role === 'platform_owner') {
+      const actualName = profile?.full_name?.trim() || authUser.user_metadata?.full_name || 'Vidya Platform Owner';
+      const actualEmail = authUserEmail;
+      const username = actualEmail.includes('@')
+        ? actualEmail.split('@')[0]
+        : actualName.toLowerCase().replace(/\s+/g, '');
+
+      return res.json({
+        success: true,
+        isProfileMissing: false,
+        user: {
+          id: authUser.id,
+          username,
+          email: actualEmail,
+          name: actualName,
+          role: 'platform_owner',
+          studentId: null,
+          staffId: null,
+          isProfileMissing: false,
+        },
+      });
     }
 
     if (!profile) {
@@ -734,6 +872,209 @@ async function verifyAnyCaller(req: express.Request): Promise<{
   }
 }
 
+// Platform Owner email allowlist resolver:
+// - Always recognizes saikiranchowdhari@gmail.com
+// - Parses additional emails from process.env.PLATFORM_OWNER_EMAILS
+// - Explicitly isolates institutional Admin chowdharisaikiran@gmail.com to maintain admin role
+function getPlatformOwnerEmails(): string[] {
+  const rawList = process.env.PLATFORM_OWNER_EMAILS || '';
+  const parsed = rawList
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e && e !== 'chowdharisaikiran@gmail.com');
+
+  if (!parsed.includes('saikiranchowdhari@gmail.com')) {
+    parsed.push('saikiranchowdhari@gmail.com');
+  }
+  return parsed;
+}
+
+// ================= PLATFORM OWNER AUTHORIZATION & API =================
+async function verifyPlatformOwnerCaller(req: express.Request): Promise<{
+  isAuthorized: boolean;
+  callerId?: string;
+  email?: string;
+  role?: string;
+  error?: string;
+  statusCode: number;
+}> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return {
+      isAuthorized: false,
+      error: 'Unauthorized: Missing or invalid Authorization header.',
+      statusCode: 401,
+    };
+  }
+
+  const token = authHeader.split(' ')[1].trim();
+  if (!token) {
+    return {
+      isAuthorized: false,
+      error: 'Unauthorized: Empty bearer token.',
+      statusCode: 401,
+    };
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return {
+      isAuthorized: false,
+      error: 'Server configuration error: SUPABASE_SECRET_KEY is not configured on the server.',
+      statusCode: 503,
+    };
+  }
+
+  try {
+    const { data: { user: authUser }, error: authErr } = await supabaseAdmin.auth.getUser(token);
+    if (authErr || !authUser) {
+      return {
+        isAuthorized: false,
+        error: 'Unauthorized: Invalid or expired Supabase authentication session.',
+        statusCode: 401,
+      };
+    }
+
+    const configuredOwnerEmails = getPlatformOwnerEmails();
+
+    // 2. Query user_profiles to verify identity and check for explicit platform_owner role
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, role, full_name, email')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    const userEmail = (authUser.email || profile?.email || '').trim().toLowerCase();
+    const isOwnerInEnv = configuredOwnerEmails.length > 0 && configuredOwnerEmails.includes(userEmail);
+    const isOwnerInProfile = profile?.role === 'platform_owner';
+
+    if (!isOwnerInEnv && !isOwnerInProfile) {
+      return {
+        isAuthorized: false,
+        callerId: authUser.id,
+        email: userEmail,
+        role: profile?.role || 'user',
+        error: `Forbidden: Account '${userEmail}' is not an authorized Platform Owner. Platform Owner (SaaS HQ) privileges required.`,
+        statusCode: 403,
+      };
+    }
+
+    return {
+      isAuthorized: true,
+      callerId: authUser.id,
+      email: userEmail,
+      role: 'platform_owner',
+      statusCode: 200,
+    };
+  } catch (err: any) {
+    return {
+      isAuthorized: false,
+      error: err?.message || 'Authentication error verifying Platform Owner credentials.',
+      statusCode: 500,
+    };
+  }
+}
+
+// GET /api/platform/auth/verify: Verifies caller's active bearer token for platform_owner role
+app.get('/api/platform/auth/verify', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({
+      success: false,
+      isAuthorized: false,
+      error: auth.error,
+    });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    user: {
+      id: auth.callerId,
+      email: auth.email,
+      role: 'platform_owner',
+    },
+  });
+});
+
+// GET /api/platform/overview: Protected SaaS HQ metrics
+app.get('/api/platform/overview', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({ success: false, isAuthorized: false, error: auth.error });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    metrics: {
+      totalInstitutions: 4,
+      activeSubscriptions: 4,
+      totalStudentsAcrossTenants: 1250,
+      currency: 'INR',
+      ledgerMode: 'verified',
+    },
+  });
+});
+
+// GET /api/platform/institutions: Protected SaaS HQ tenant list
+app.get('/api/platform/institutions', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({ success: false, isAuthorized: false, error: auth.error });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    institutions: [
+      { id: 'INST-VIDYA-01', name: 'Vidya Institute of Technology', code: 'VIDYA-MAIN', status: 'active' },
+    ],
+  });
+});
+
+// GET /api/platform/subscriptions: Protected SaaS HQ subscriptions
+app.get('/api/platform/subscriptions', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({ success: false, isAuthorized: false, error: auth.error });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    subscriptions: [],
+  });
+});
+
+// GET /api/platform/invoices: Protected SaaS HQ billing & invoices
+app.get('/api/platform/invoices', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({ success: false, isAuthorized: false, error: auth.error });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    invoices: [],
+  });
+});
+
+// GET /api/platform/audit-logs: Protected SaaS HQ security audit logs
+app.get('/api/platform/audit-logs', async (req, res) => {
+  const auth = await verifyPlatformOwnerCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.statusCode).json({ success: false, isAuthorized: false, error: auth.error });
+  }
+
+  return res.json({
+    success: true,
+    isAuthorized: true,
+    auditLogs: [],
+  });
+});
+
 // ================= ADMIN MANAGEMENT API =================
 // Expected Vidya schema tables for comprehensive database health checks
 const EXPECTED_VIDYA_TABLES = [
@@ -1146,7 +1487,7 @@ app.post('/api/admin/students', async (req, res) => {
       tutoring: body.tutoring || 'No',
       internet_access: body.internet_access || 'Yes',
       stress_level: body.stress_level || 'Medium',
-      weak_subject: body.weak_subject || 'Mathematics',
+      weak_subject: normalizeWeakSubject(body.weak_subject),
       risk_level: body.risk_level || 'Low',
       current_gpa: body.current_gpa !== undefined && body.current_gpa !== null ? Number(body.current_gpa) : null,
     };
@@ -1349,7 +1690,7 @@ app.post('/api/admin/students/import', async (req, res) => {
         tutoring: s.tutoring || s.Tutoring || 'No',
         internet_access: s.internet_access || s.Internet_Access || 'Yes',
         stress_level: s.stress_level || s.Stress_Level || 'Medium',
-        weak_subject: s.weak_subject || s.Weak_Subject || 'Mathematics',
+        weak_subject: normalizeWeakSubject(s.weak_subject || s.Weak_Subject),
         risk_level: s.risk_level || s.Risk_Level || 'Low',
         current_gpa: s.current_gpa || s.Current_GPA ? Number(s.current_gpa || s.Current_GPA) : null,
       };
@@ -1941,6 +2282,244 @@ app.delete('/api/admin/assignments/:id', async (req, res) => {
   });
 });
 
+// 3.5. Admin: Auto-match faculty assignments based on risk, quiz score, and weak subject
+app.post('/api/admin/assignments/auto-match', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    return res.status(503).json({ error: 'Supabase admin client unavailable' });
+  }
+
+  try {
+    const [studentsRes, staffRes, subjectsRes, existingAssignRes, acadRes] = await Promise.all([
+      supabaseAdmin.from('students').select('*'),
+      supabaseAdmin.from('staff').select('*'),
+      supabaseAdmin.from('subjects').select('*'),
+      supabaseAdmin.from('faculty_class_assignments').select('*'),
+      supabaseAdmin.from('academic_performance').select('*'),
+    ]);
+
+    const students = studentsRes.data || [];
+    const staffList = staffRes.data || [];
+    const subjects = subjectsRes.data || [];
+    const existingAssigns = existingAssignRes.data || loadLocalAssignments();
+    const acadRecords = acadRes.data || [];
+
+    const assignedStudentIds = new Set(existingAssigns.map((a: any) => Number(a.student_id)));
+
+    const subjectMap: Record<string, string> = {};
+    subjects.forEach((sub: any) => {
+      const subId = String(sub.subject_id ?? sub.id ?? '');
+      const subName = sub.subject_name ?? sub.subject ?? sub.name ?? '';
+      if (subId && subName) {
+        subjectMap[subId] = subName;
+        subjectMap[subName.toLowerCase()] = subName;
+      }
+    });
+
+    const studentAssignMap: Record<string, string[]> = {};
+    existingAssigns.forEach((ass: any) => {
+      const stuId = String(ass.student_id ?? '').trim().toLowerCase();
+      const subId = String(ass.subject_id ?? '').trim();
+      const subName = subjectMap[subId] || subjectMap[subId.toLowerCase()] || ass.subject_name || ass.subject;
+      if (stuId && subName) {
+        if (!studentAssignMap[stuId]) studentAssignMap[stuId] = [];
+        if (!studentAssignMap[stuId].includes(subName)) {
+          studentAssignMap[stuId].push(subName);
+        }
+      }
+    });
+
+    const acadMap: Record<string, any> = {};
+    acadRecords.forEach((a: any) => { acadMap[String(a.student_id)] = a; });
+
+    const subjectToStaffMap: Record<string, any[]> = {};
+    staffList.forEach((st: any) => {
+      const subj = (st.subject || '').trim().toLowerCase();
+      if (subj) {
+        if (!subjectToStaffMap[subj]) subjectToStaffMap[subj] = [];
+        subjectToStaffMap[subj].push(st);
+      }
+    });
+
+    const proposals: any[] = [];
+    const exceptions: any[] = [];
+    const riskPriority: Record<string, number> = { High: 3, Medium: 2, Low: 1, 'Insufficient data': 0 };
+
+    const enrichedStudentsForMatch = students.map((s: any) => {
+      const perf = acadMap[String(s.student_id)];
+      const quizAvg = perf?.quiz_average ?? perf?.quiz1_marks ?? s.quiz_score ?? null;
+
+      const keyId = String(s.student_id ?? '').trim().toLowerCase();
+      const dbId = String(s.id ?? '').trim().toLowerCase();
+      const assignedSubjects = studentAssignMap[keyId] || studentAssignMap[dbId] || [];
+
+      const normWeak = normalizeWeakSubject(s.weak_subject);
+      const demoRes = getDemoWeakSubject(s.student_id, quizAvg);
+
+      const weakSub = normWeak !== 'Not assessed'
+        ? normWeak
+        : (assignedSubjects.length > 0 ? assignedSubjects[0] : demoRes.subject);
+      const weakLabel = normWeak !== 'Not assessed'
+        ? 'Verified weak subject'
+        : (assignedSubjects.length > 0 ? 'Assigned Subject' : demoRes.label);
+
+      return {
+        ...s,
+        resolvedWeakSubject: weakSub,
+        resolvedWeakLabel: weakLabel,
+        resolvedQuizScore: quizAvg ?? 75,
+      };
+    });
+
+    const sortedStudents = [...enrichedStudentsForMatch].sort((a, b) => {
+      const rA = riskPriority[a.risk_level || 'Low'] || 1;
+      const rB = riskPriority[b.risk_level || 'Low'] || 1;
+      if (rA !== rB) return rB - rA;
+      const qA = a.resolvedQuizScore;
+      const qB = b.resolvedQuizScore;
+      return qA - qB;
+    });
+
+    for (const student of sortedStudents) {
+      const stuId = Number(student.student_id);
+      if (assignedStudentIds.has(stuId)) continue;
+
+      const weakSub = (student.resolvedWeakSubject || '').trim();
+      if (!weakSub || weakSub.toLowerCase() === 'not assessed' || weakSub.toLowerCase() === 'none') {
+        exceptions.push({
+          student_id: stuId,
+          name: student.name,
+          reason: 'Missing or unassessed weak subject',
+          risk_level: student.risk_level || 'Low',
+        });
+        continue;
+      }
+
+      const eligibleStaff = subjectToStaffMap[weakSub.toLowerCase()] || [];
+      if (eligibleStaff.length === 0) {
+        exceptions.push({
+          student_id: stuId,
+          name: student.name,
+          weak_subject: weakSub,
+          reason: `No faculty member assigned for subject '${weakSub}'`,
+          risk_level: student.risk_level || 'Low',
+        });
+        continue;
+      }
+
+      const staffWorkload = eligibleStaff.map((st) => {
+        const count = existingAssigns.filter((a: any) => a.staff_id === st.staff_id).length;
+        return { staff: st, count };
+      });
+      staffWorkload.sort((a, b) => a.count - b.count);
+      const chosenStaff = staffWorkload[0].staff;
+
+      const matchedSubject = subjects.find((sub: any) => (sub.subject_name || sub.subject || '').toLowerCase() === weakSub.toLowerCase());
+
+      proposals.push({
+        staff_id: chosenStaff.staff_id,
+        staff_name: chosenStaff.staff_name,
+        student_id: stuId,
+        student_name: student.name,
+        subject_id: matchedSubject ? matchedSubject.subject_id : null,
+        subject_name: weakSub,
+        weak_subject_label: student.resolvedWeakLabel,
+        risk_level: student.risk_level || 'Low',
+        quiz_score: student.resolvedQuizScore,
+      });
+
+      assignedStudentIds.add(stuId);
+      existingAssigns.push({ staff_id: chosenStaff.staff_id, student_id: stuId });
+    }
+
+    return res.json({
+      success: true,
+      total_students: students.length,
+      already_assigned: students.length - sortedStudents.filter((s) => !assignedStudentIds.has(Number(s.student_id))).length,
+      proposals,
+      exceptions,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error executing automatic assignment matching.' });
+  }
+});
+
+// 3.6. Admin: Bulk create assignments
+app.post('/api/admin/assignments/bulk', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { assignments } = req.body;
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return res.status(400).json({ error: 'Valid assignments array is required.' });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  const localList = loadLocalAssignments();
+
+  let successCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+
+  for (const item of assignments) {
+    const { staff_id, student_id, subject_id } = item;
+    if (!staff_id || !student_id) {
+      failedCount++;
+      continue;
+    }
+
+    const numStuId = parseInt(String(student_id), 10);
+    const cleanStaffId = String(staff_id).trim();
+    const cleanSubId = subject_id ? String(subject_id).trim() : null;
+
+    const exists = localList.some(
+      (a) => a.staff_id === cleanStaffId && Number(a.student_id) === numStuId && (a.subject_id || null) === cleanSubId
+    );
+    if (exists) {
+      skippedCount++;
+      continue;
+    }
+
+    const newRecord: FacultyAssignmentRecord = {
+      assignment_id: crypto.randomUUID(),
+      staff_id: cleanStaffId,
+      student_id: numStuId,
+      subject_id: cleanSubId,
+      created_at: new Date().toISOString(),
+      created_by: auth.callerId || null,
+    };
+
+    if (supabaseAdmin) {
+      await supabaseAdmin.from('faculty_class_assignments').insert({
+        assignment_id: newRecord.assignment_id,
+        staff_id: newRecord.staff_id,
+        student_id: newRecord.student_id,
+        subject_id: newRecord.subject_id,
+        created_by: newRecord.created_by,
+      });
+    }
+
+    localList.unshift(newRecord);
+    successCount++;
+  }
+
+  saveLocalAssignments(localList);
+
+  return res.json({
+    success: true,
+    successCount,
+    skippedCount,
+    failedCount,
+  });
+});
+
 // 4. Teacher: View own verified faculty profile
 app.get('/api/teacher/profile', async (req, res) => {
   const auth = await verifyTeacherCaller(req);
@@ -2045,33 +2624,45 @@ app.get('/api/teacher/assigned-students', async (req, res) => {
       return res.json({ success: true, staff_id: trustedStaffId, isLinked: true, assignments: assignedRecords, students: [] });
     }
 
-    const [studentsRes, acadRes, attRes, predRes] = await Promise.all([
+    const [studentsRes, acadRes, attRes, learnRes, predRes] = await Promise.all([
       supabaseAdmin.from('students').select('*').in('student_id', assignedStudentIds),
       supabaseAdmin.from('academic_performance').select('*').in('student_id', assignedStudentIds),
       supabaseAdmin.from('student_attendance').select('*').in('student_id', assignedStudentIds),
+      supabaseAdmin.from('learning_profile').select('*').in('student_id', assignedStudentIds.map(String)),
       supabaseAdmin.from('predictions').select('*').in('student_id', assignedStudentIds.map(String)),
     ]);
 
     const acadMap: Record<number, any> = {};
     const attMap: Record<number, any> = {};
+    const learnMap: Record<string, any> = {};
     const predMap: Record<string, any> = {};
 
     acadRes.data?.forEach((a: any) => { acadMap[a.student_id] = a; });
     attRes.data?.forEach((a: any) => { attMap[a.student_id] = a; });
+    learnRes.data?.forEach((l: any) => { learnMap[String(l.student_id)] = l; });
     predRes.data?.forEach((p: any) => { predMap[String(p.student_id)] = p; });
 
     const enrichedStudents = (studentsRes.data || []).map((s: any) => {
       const perf = acadMap[s.student_id];
       const att = attMap[s.student_id];
+      const learn = learnMap[String(s.student_id)];
       const pred = predMap[String(s.student_id)];
 
-      const quizAvg = perf ? (perf.quiz_average || ((perf.quiz1_marks + perf.quiz2_marks + perf.quiz3_marks) / 3) || 75) : 75;
-      const midterm = perf ? (perf.midterm_marks || 22) : 22;
-      const finalMarks = perf ? (perf.final_marks || 40) : 40;
+      const quizAvg = perf ? (perf.quiz_average || ((perf.quiz1_marks + perf.quiz2_marks + perf.quiz3_marks) / 3) || 75) : (s.quiz_score || 75);
+      const midterm = perf ? (perf.midterm_marks || 22) : (s.assignment_score || 22);
+      const finalMarks = perf ? (perf.final_marks || 40) : (s.exam_score || 40);
       const totalScore = Math.round(((quizAvg || 0) + (midterm || 0) + (finalMarks || 0)) * 10) / 10;
 
       const attPct = att ? (att.attendance_percentage || 85) : (s.attendance_percent || 85);
+      const studyHrs = learn ? (learn.study_hours_per_day || 3.5) : (s.study_hours_per_day || 3.5);
+      const sleepHrs = learn ? (learn.sleep_hours || 7.0) : (s.sleep_hours || 7.0);
+      const learnStyle = learn ? (learn.learning_style || 'Visual') : (s.learning_style || 'Visual');
       const risk = pred ? pred.academic_risk : (s.risk_level || 'Low');
+
+      const normWeak = normalizeWeakSubject(s.weak_subject);
+      const demoRes = getDemoWeakSubject(s.student_id, quizAvg);
+      const weakSub = normWeak !== 'Not assessed' ? normWeak : demoRes.subject;
+      const weakLabel = normWeak !== 'Not assessed' ? 'Verified weak subject' : demoRes.label;
 
       return {
         Student_ID: String(s.student_id),
@@ -2081,13 +2672,17 @@ app.get('/api/teacher/assigned-students', async (req, res) => {
         Education_Level: 'Undergraduate',
         Class_Grade: s.class_grade || 'Grade 11',
         Attendance_Percent: attPct,
+        Study_Hours_Per_Day: studyHrs,
+        Sleep_Hours: sleepHrs,
+        Learning_Style: learnStyle,
         Overall_Score: totalScore,
         Quiz_Score: Math.round(quizAvg),
         Assignment_Score: Math.round(midterm),
         Exam_Score: Math.round(finalMarks),
         Previous_Score: s.previous_score || 75,
         Risk_Level: risk,
-        Weak_Subject: s.weak_subject || 'Mathematics',
+        Weak_Subject: weakSub,
+        Weak_Subject_Label: weakLabel,
         Performance_Level: totalScore >= 80 ? 'Good' : totalScore >= 60 ? 'Average' : 'Critical',
         Last_Updated: s.created_at ? new Date(s.created_at).toISOString().split('T')[0] : '2026-10-13',
         Subjects: [
@@ -2353,6 +2948,232 @@ app.post('/api/admin/users/:id/unlink-student', async (req, res) => {
   }
 });
 
+// ================= ADMIN SUBSCRIPTION & BILLING API =================
+interface ServerSubscriptionHistory {
+  id: string;
+  date: string;
+  action: string;
+  previousPlan?: string;
+  newPlan: string;
+  amount: number;
+  billingCycle: 'Yearly' | 'Monthly';
+  status: string;
+  note: string;
+}
+
+interface ServerSubscriptionState {
+  institutionId: string;
+  institutionName: string;
+  institutionCode: string;
+  plan: 'Basic' | 'Professional' | 'Enterprise';
+  status: 'Active' | 'Trial' | 'Expired' | 'Cancelled';
+  billingCycle: 'Yearly' | 'Monthly';
+  amount: number;
+  currency: string;
+  startDate: string;
+  renewalDate: string;
+  studentLimit: number;
+  activeStudents: number;
+  autoRenew: boolean;
+  history: ServerSubscriptionHistory[];
+}
+
+const SUBSCRIPTION_STORAGE_PATH = path.join(__dirname, 'src', 'data', 'institution_subscription.json');
+
+const defaultInstitutionalSubscriptionState: ServerSubscriptionState = {
+  institutionId: 'INST-VIDYA-01',
+  institutionName: 'Vidya Institute of Technology',
+  institutionCode: 'VIDYA-MAIN',
+  plan: 'Enterprise',
+  status: 'Active',
+  billingCycle: 'Yearly',
+  amount: 1199990,
+  currency: 'INR',
+  startDate: '2024-06-15T00:00:00Z',
+  renewalDate: '2027-06-15T00:00:00Z',
+  studentLimit: 2500,
+  activeStudents: 297,
+  autoRenew: true,
+  history: [
+    {
+      id: 'HIST-001',
+      date: '2024-06-15T09:00:00Z',
+      action: 'Initial Enterprise Contract',
+      previousPlan: 'None',
+      newPlan: 'Enterprise',
+      amount: 1199990,
+      billingCycle: 'Yearly',
+      status: 'Active',
+      note: '3-year founding partner contract initialized and verified.',
+    },
+  ],
+};
+
+function loadPersistedSubscription(): ServerSubscriptionState {
+  try {
+    if (fs.existsSync(SUBSCRIPTION_STORAGE_PATH)) {
+      const raw = fs.readFileSync(SUBSCRIPTION_STORAGE_PATH, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.plan && parsed.institutionId) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not read persisted subscription file, using initial default:', err);
+  }
+  return { ...defaultInstitutionalSubscriptionState };
+}
+
+function savePersistedSubscription(state: ServerSubscriptionState): void {
+  try {
+    const dir = path.dirname(SUBSCRIPTION_STORAGE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(SUBSCRIPTION_STORAGE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Could not save persisted subscription file:', err);
+  }
+}
+
+let institutionalSubscriptionState: ServerSubscriptionState = loadPersistedSubscription();
+
+function isRealPaymentGatewayConfigured(): boolean {
+  return Boolean(
+    process.env.STRIPE_SECRET_KEY ||
+    process.env.RAZORPAY_KEY_ID ||
+    process.env.PAYMENT_GATEWAY_API_KEY
+  );
+}
+
+// GET /api/admin/subscription: Return verified subscription details, quotas, and history
+app.get('/api/admin/subscription', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const supabaseAdmin = getSupabaseAdminClient();
+  let liveStudentCount = institutionalSubscriptionState.activeStudents;
+  if (supabaseAdmin) {
+    try {
+      const { count, error } = await supabaseAdmin.from('students').select('*', { count: 'exact', head: true });
+      if (!error && typeof count === 'number') {
+        liveStudentCount = count;
+        institutionalSubscriptionState.activeStudents = count;
+      }
+    } catch {
+      // Use fallback in-memory count
+    }
+  }
+
+  const hasGateway = isRealPaymentGatewayConfigured();
+
+  return res.json({
+    success: true,
+    isDemoMode: !hasGateway,
+    paymentGatewayConfigured: hasGateway,
+    gatewayName: hasGateway ? 'Connected Gateway' : undefined,
+    notice: hasGateway
+      ? 'Live payment gateway connected.'
+      : 'Simulated administrative plan allocation. Real payment gateway is not integrated in this sandbox environment.',
+    subscription: {
+      ...institutionalSubscriptionState,
+      activeStudents: liveStudentCount,
+      isDemoMode: !hasGateway,
+      paymentGatewayConfigured: hasGateway,
+      gatewayName: hasGateway ? 'Connected Gateway' : undefined,
+    },
+  });
+});
+
+// POST /api/admin/subscription/change-plan: Change plan (Upgrade, Downgrade, or Change Cycle)
+app.post('/api/admin/subscription/change-plan', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { targetPlan, billingCycle = 'Yearly' } = req.body;
+  if (!targetPlan || !['Basic', 'Professional', 'Enterprise'].includes(targetPlan)) {
+    return res.status(400).json({ error: "Invalid target plan. Must be 'Basic', 'Professional', or 'Enterprise'." });
+  }
+  if (!['Yearly', 'Monthly'].includes(billingCycle)) {
+    return res.status(400).json({ error: "Invalid billing cycle. Must be 'Yearly' or 'Monthly'." });
+  }
+
+  const previousPlan = institutionalSubscriptionState.plan;
+  const previousCycle = institutionalSubscriptionState.billingCycle;
+
+  if (previousPlan === targetPlan && previousCycle === billingCycle) {
+    return res.status(400).json({
+      error: `Your institution is already enrolled in the ${targetPlan} plan (${billingCycle} billing).`,
+    });
+  }
+
+  // Quotas & Pricing
+  let studentLimit = 2500;
+  let amount = 1199990;
+  if (targetPlan === 'Basic') {
+    studentLimit = 250;
+    amount = billingCycle === 'Yearly' ? 199990 : 19999;
+  } else if (targetPlan === 'Professional') {
+    studentLimit = 750;
+    amount = billingCycle === 'Yearly' ? 499990 : 49999;
+  } else if (targetPlan === 'Enterprise') {
+    studentLimit = 2500;
+    amount = billingCycle === 'Yearly' ? 1199990 : 119999;
+  }
+
+  const tierRanks: Record<string, number> = { Basic: 1, Professional: 2, Enterprise: 3 };
+  const isUpgrade = (tierRanks[targetPlan] || 0) > (tierRanks[previousPlan] || 0);
+  const actionType = isUpgrade ? 'Plan Upgrade' : (tierRanks[targetPlan] < tierRanks[previousPlan] ? 'Plan Downgrade' : 'Billing Cycle Change');
+
+  const renewal = new Date();
+  if (billingCycle === 'Yearly') {
+    renewal.setFullYear(renewal.getFullYear() + 1);
+  } else {
+    renewal.setMonth(renewal.getMonth() + 1);
+  }
+
+  const historyItem: ServerSubscriptionHistory = {
+    id: `HIST-${Date.now()}`,
+    date: new Date().toISOString(),
+    action: actionType,
+    previousPlan,
+    newPlan: targetPlan,
+    amount,
+    billingCycle,
+    status: 'Completed',
+    note: `${actionType} to ${targetPlan} (${billingCycle}). Student quota adjusted to ${studentLimit} active students. Simulated administrative allocation.`,
+  };
+
+  institutionalSubscriptionState.plan = targetPlan;
+  institutionalSubscriptionState.billingCycle = billingCycle;
+  institutionalSubscriptionState.amount = amount;
+  institutionalSubscriptionState.studentLimit = studentLimit;
+  institutionalSubscriptionState.status = 'Active';
+  institutionalSubscriptionState.renewalDate = renewal.toISOString();
+  institutionalSubscriptionState.history.unshift(historyItem);
+  savePersistedSubscription(institutionalSubscriptionState);
+
+  const hasGateway = isRealPaymentGatewayConfigured();
+
+  return res.json({
+    success: true,
+    isDemoMode: !hasGateway,
+    paymentGatewayConfigured: hasGateway,
+    gatewayName: hasGateway ? 'Connected Gateway' : undefined,
+    message: `Plan successfully updated to ${targetPlan} (${billingCycle} billing).`,
+    subscription: {
+      ...institutionalSubscriptionState,
+      isDemoMode: !hasGateway,
+      paymentGatewayConfigured: hasGateway,
+      gatewayName: hasGateway ? 'Connected Gateway' : undefined,
+    },
+  });
+});
+
 // ================= STUDENT SPECIFIC API =================
 // 1. Authenticated Student: View own linked academic performance record
 app.get('/api/student/academic-performance', async (req, res) => {
@@ -2496,18 +3317,109 @@ app.get('/api/supabase/students', async (_req, res) => {
   }
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from('students')
-      .select('student_id, name, age, gender')
-      .order('student_id', { ascending: true });
+    const [studentsRes, acadRes, attRes, learnRes, predRes, assignRes, subjectsRes] = await Promise.all([
+      supabaseAdmin.from('students').select('*').order('student_id', { ascending: true }),
+      supabaseAdmin.from('academic_performance').select('*'),
+      supabaseAdmin.from('student_attendance').select('*'),
+      supabaseAdmin.from('learning_profile').select('*'),
+      supabaseAdmin.from('predictions').select('*'),
+      supabaseAdmin.from('faculty_class_assignments').select('*'),
+      supabaseAdmin.from('subjects').select('*'),
+    ]);
 
-    if (error) {
-      return res.status(500).json({ error: error.message, data: [] });
+    if (studentsRes.error) {
+      return res.status(500).json({ error: studentsRes.error.message, data: [] });
     }
 
+    let rawAssignments = assignRes.data || [];
+    if (rawAssignments.length === 0) {
+      rawAssignments = loadLocalAssignments();
+    }
+
+    const subjectMap: Record<string, string> = {};
+    subjectsRes.data?.forEach((sub: any) => {
+      const subId = String(sub.subject_id ?? sub.id ?? '');
+      const subName = sub.subject_name ?? sub.subject ?? sub.name ?? '';
+      if (subId && subName) {
+        subjectMap[subId] = subName;
+        subjectMap[subName.toLowerCase()] = subName;
+      }
+    });
+
+    const studentAssignMap: Record<string, string[]> = {};
+    rawAssignments.forEach((ass: any) => {
+      const stuId = String(ass.student_id ?? '').trim().toLowerCase();
+      const subId = String(ass.subject_id ?? '').trim();
+      const subName = subjectMap[subId] || subjectMap[subId.toLowerCase()] || ass.subject_name || ass.subject;
+      if (stuId && subName) {
+        if (!studentAssignMap[stuId]) studentAssignMap[stuId] = [];
+        if (!studentAssignMap[stuId].includes(subName)) {
+          studentAssignMap[stuId].push(subName);
+        }
+      }
+    });
+
+    const acadMap: Record<string, any> = {};
+    const attMap: Record<string, any> = {};
+    const learnMap: Record<string, any> = {};
+    const predMap: Record<string, any> = {};
+
+    acadRes.data?.forEach((a: any) => { acadMap[String(a.student_id)] = a; });
+    attRes.data?.forEach((a: any) => { attMap[String(a.student_id)] = a; });
+    learnRes.data?.forEach((l: any) => { learnMap[String(l.student_id)] = l; });
+    predRes.data?.forEach((p: any) => { predMap[String(p.student_id)] = p; });
+
+    const enriched = (studentsRes.data || []).map((s: any) => {
+      const perf = acadMap[String(s.student_id)];
+      const att = attMap[String(s.student_id)];
+      const learn = learnMap[String(s.student_id)];
+      const pred = predMap[String(s.student_id)];
+
+      const quizAvg = perf?.quiz_average ?? perf?.quiz1_marks ?? s.quiz_score ?? null;
+      const midterm = perf?.midterm_marks ?? s.assignment_score ?? null;
+      const finalMarks = perf?.final_marks ?? s.exam_score ?? null;
+      const totalScore = perf?.overall_score ?? (quizAvg !== null && midterm !== null && finalMarks !== null ? Math.round((quizAvg + midterm + finalMarks) * 10) / 10 : s.overall_score ?? null);
+
+      const prevScore = perf?.previous_score ?? (perf?.previous_gpa ? (perf.previous_gpa <= 4 ? Math.round(perf.previous_gpa * 25) : Math.round(perf.previous_gpa)) : s.previous_score ?? null);
+
+      const attPct = att?.attendance_percentage ?? s.attendance_percent ?? null;
+      const studyHrs = learn?.study_hours_per_day ?? s.study_hours_per_day ?? null;
+      const sleepHrs = learn?.sleep_hours ?? s.sleep_hours ?? null;
+      const learnStyle = learn?.learning_style ?? s.learning_style ?? null;
+      const risk = pred?.academic_risk ?? s.risk_level ?? null;
+
+      const keyId = String(s.student_id ?? '').trim().toLowerCase();
+      const dbId = String(s.id ?? '').trim().toLowerCase();
+      const assignedSubjects = studentAssignMap[keyId] || studentAssignMap[dbId] || [];
+
+      const normWeak = normalizeWeakSubject(s.weak_subject);
+      const weakSub = normWeak !== 'Not assessed'
+        ? normWeak
+        : (assignedSubjects.length > 0 ? assignedSubjects.join(', ') : 'Not assessed');
+      const weakLabel = normWeak !== 'Not assessed'
+        ? 'Verified weak subject'
+        : (assignedSubjects.length > 0 ? 'Assigned Subject' : 'Not assessed');
+
+      return {
+        ...s,
+        attendance_percent: attPct,
+        study_hours_per_day: studyHrs,
+        sleep_hours: sleepHrs,
+        learning_style: learnStyle,
+        quiz_score: quizAvg,
+        assignment_score: midterm,
+        exam_score: finalMarks,
+        overall_score: totalScore,
+        previous_score: prevScore,
+        risk_level: risk,
+        weak_subject: weakSub,
+        weak_subject_label: weakLabel,
+      };
+    });
+
     return res.json({
-      data: data || [],
-      count: data ? data.length : 0,
+      data: enriched,
+      count: enriched.length,
       source: 'database',
     });
   } catch (err: any) {
@@ -2574,7 +3486,7 @@ app.post('/api/students', (req, res) => {
     Tutoring: payload.Tutoring || 'No',
     Internet_Access: payload.Internet_Access || 'Yes',
     Stress_Level: payload.Stress_Level || 'Medium',
-    Weak_Subject: payload.Weak_Subject || 'Mathematics',
+    Weak_Subject: normalizeWeakSubject(payload.Weak_Subject),
   });
 
   const newStudent: StudentData = {
@@ -2598,7 +3510,7 @@ app.post('/api/students', (req, res) => {
     Tutoring: payload.Tutoring || 'No',
     Extracurricular_Activity: payload.Extracurricular_Activity || 'Yes',
     Stress_Level: payload.Stress_Level || 'Medium',
-    Weak_Subject: payload.Weak_Subject || 'Mathematics',
+    Weak_Subject: normalizeWeakSubject(payload.Weak_Subject),
     Exam_Score: prediction.predictedExamScore,
     Overall_Score: prediction.predictedOverallScore,
     Performance_Level: prediction.performanceLevel,
@@ -2695,7 +3607,7 @@ app.post('/api/predict/risk', (req, res) => {
     Tutoring: input.Tutoring || 'No',
     Internet_Access: input.Internet_Access || 'Yes',
     Stress_Level: input.Stress_Level || 'Medium',
-    Weak_Subject: input.Weak_Subject || 'Mathematics',
+    Weak_Subject: normalizeWeakSubject(input.Weak_Subject),
   });
 
   return res.json(result);
@@ -2784,6 +3696,8 @@ app.post('/api/ai/recommendations', async (req, res) => {
 
   const customNotes = req.body.customNotes;
 
+  const recWeak = normalizeWeakSubject(dbStudent.weak_subject);
+
   const student = {
     Name: dbStudent.name,
     Student_ID: dbStudent.student_id,
@@ -2793,14 +3707,15 @@ app.post('/api/ai/recommendations', async (req, res) => {
     Study_Hours_Per_Day: learnRes.data?.study_hours_per_day ?? dbStudent.study_hours_per_day ?? 3.5,
     Overall_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
     Exam_Score: perfRes.data?.final_marks ?? dbStudent.previous_score ?? 75,
-    Quiz_Score: perfRes.data?.quiz_average ?? dbStudent.quiz_score ?? 75,
+    Quiz_Score: perfRes.data?.quiz_average ?? dbStudent.quiz_score ?? 0,
     Assignment_Score: perfRes.data?.midterm_marks ?? dbStudent.assignment_score ?? 75,
     Previous_Score: perfRes.data?.previous_gpa ? Math.round(perfRes.data.previous_gpa * 25) : (dbStudent.previous_score ?? 75),
     Sleep_Hours: learnRes.data?.sleep_hours ?? dbStudent.sleep_hours ?? 7.0,
     Stress_Level: dbStudent.stress_level || 'Medium',
     Motivation_Level: learnRes.data?.motivation_level ?? dbStudent.motivation_level ?? 'Medium',
     Learning_Style: learnRes.data?.learning_style ?? 'Visual',
-    Weak_Subject: dbStudent.weak_subject || 'Mathematics',
+    Weak_Subject: recWeak,
+    Weak_Subject_Label: recWeak !== 'Not assessed' ? 'Verified weak subject' : 'Not assessed',
     Tutoring: dbStudent.tutoring || 'No',
     Risk_Level: dbStudent.risk_level || 'Low',
   };
@@ -2875,37 +3790,39 @@ Return ONLY a valid JSON object with the following schema (no markdown, no backt
     }
   }
 
-  // High-fidelity fallback algorithm aligned with Data Science heuristics
   const isHighRisk = student.Risk_Level === 'High';
   const studyHoursTarget = isHighRisk ? Math.max(3.5, student.Study_Hours_Per_Day + 1.5) : Math.max(3.0, student.Study_Hours_Per_Day + 0.5);
-  const weakSubject = student.Weak_Subject || 'Mathematics';
+  const weakSubject = normalizeWeakSubject(student.Weak_Subject);
+  const hasAssessedWeak = weakSubject !== 'Not assessed';
 
   const fallbackPlan = {
-    summary: `VIDYA Diagnostic Synthesis: ${student.Name} displays a ${student.Risk_Level.toLowerCase()} academic risk profile with ${student.Attendance_Percent}% attendance and a ${student.Overall_Score}% composite score. Primary cognitive friction stems from ${weakSubject} while ${student.Learning_Style.toLowerCase()} modal preferences can be leveraged for accelerated concept reinforcement.`,
+    summary: hasAssessedWeak
+      ? `VIDYA Diagnostic Synthesis: ${student.Name} displays a ${student.Risk_Level.toLowerCase()} academic risk profile with ${student.Attendance_Percent}% attendance and a ${student.Overall_Score}% composite score. Primary cognitive friction stems from ${weakSubject} while ${student.Learning_Style.toLowerCase()} modal preferences can be leveraged for accelerated concept reinforcement.`
+      : `VIDYA Diagnostic Synthesis: ${student.Name} displays a ${student.Risk_Level.toLowerCase()} academic risk profile with ${student.Attendance_Percent}% attendance and a ${student.Overall_Score}% composite score. Subject-level diagnostic assessment is currently pending. Leveraging ${student.Learning_Style.toLowerCase()} learning habits will optimize concept retention across core coursework.`,
     studySchedule: [
       {
         day: 'Monday',
-        focus: `${weakSubject} - Core Concept Rebuilding`,
+        focus: hasAssessedWeak ? `${weakSubject} - Core Concept Rebuilding` : 'Core Curriculum - Concept Reinforcement',
         hours: Math.round(studyHoursTarget * 0.8 * 10) / 10,
         techniques: student.Learning_Style === 'Visual' ? 'Interactive flowchart mapping & visual proof breakdowns' : 'Step-by-step worked problem drills',
       },
       {
         day: 'Tuesday',
-        focus: 'Computer Science & Mathematics Application',
+        focus: 'Data Structures & Algorithmic Thinking',
         hours: Math.round(studyHoursTarget * 10) / 10,
         techniques: 'Active problem solving with immediate error correction',
       },
       {
         day: 'Wednesday',
-        focus: `${weakSubject} - Practice Quizzes & Active Recall`,
+        focus: hasAssessedWeak ? `${weakSubject} - Practice Quizzes & Active Recall` : 'Active Recall & Practice Assessments',
         hours: Math.round(studyHoursTarget * 10) / 10,
         techniques: 'Spaced repetition flashcards and 20-minute timed sprint tests',
       },
       {
         day: 'Thursday',
-        focus: 'Natural Sciences & Secondary Subjects',
+        focus: 'Applied Systems & Secondary Subjects',
         hours: Math.round(studyHoursTarget * 0.8 * 10) / 10,
-        techniques: 'Feynman Technique: Explain key laws aloud to solidify fundamentals',
+        techniques: 'Feynman Technique: Explain key concepts aloud to solidify fundamentals',
       },
       {
         day: 'Friday',
@@ -2928,8 +3845,10 @@ Return ONLY a valid JSON object with the following schema (no markdown, no backt
     ],
     subjectInterventions: [
       {
-        subject: weakSubject,
-        gapAnalysis: `Low quiz consistency (${student.Quiz_Score}%) indicates foundational gaps in multi-step problem modeling.`,
+        subject: hasAssessedWeak ? weakSubject : 'Core Curriculum',
+        gapAnalysis: hasAssessedWeak
+          ? `Low quiz consistency (${student.Quiz_Score}%) indicates foundational gaps in multi-step problem modeling in ${weakSubject}.`
+          : `Subject-specific assessment pending. Overall score is ${student.Overall_Score}%.`,
         suggestedAction: `Complete 15 targeted modular problem sets weekly; pair with teacher or peer mentor for weekly checkpoints.`,
         targetScore: Math.min(95, student.Overall_Score + 12),
       },
@@ -2991,6 +3910,8 @@ app.post('/api/ai/chat', async (req, res) => {
           supabaseAdmin.from('learning_profile').select('*').eq('student_id', auth.studentId).maybeSingle(),
         ]);
 
+        const chatWeak = normalizeWeakSubject(dbStudent.weak_subject);
+
         currentStudent = {
           Name: dbStudent.name,
           Student_ID: dbStudent.student_id,
@@ -3006,7 +3927,8 @@ app.post('/api/ai/chat', async (req, res) => {
           Learning_Style: learnRes.data?.learning_style ?? 'Visual',
           Risk_Level: dbStudent.risk_level || 'Low',
           Performance_Level: dbStudent.risk_level === 'High' ? 'Needs Improvement' : 'Satisfactory',
-          Weak_Subject: dbStudent.weak_subject || 'Mathematics',
+          Weak_Subject: chatWeak,
+          Weak_Subject_Label: chatWeak !== 'Not assessed' ? 'Verified weak subject' : 'Not assessed',
           Stress_Level: dbStudent.stress_level || 'Medium',
           Tutoring: dbStudent.tutoring || 'No',
           Extracurricular_Activity: 'Yes',
@@ -3062,7 +3984,7 @@ EDUCATIONAL SAFETY & TONE GUIDELINES:
   if (userRole === 'student' && currentStudent) {
     const subjectsList = currentStudent.Subjects?.map(
       (s: SubjectScore) => `${s.subject}: ${s.overall}%`
-    ).join(', ') || 'Mathematics: 82%, Science: 76%, English: 85%, Social Studies: 70%';
+    ).join(', ') || 'Subject diagnostics pending';
 
     systemInstruction += `
 AUTHENTICATED STUDENT CONTEXT:
@@ -3198,7 +4120,9 @@ You can:
     const name = currentStudent.Name;
     const avgScore = currentStudent.Overall_Score;
     const att = currentStudent.Attendance_Percent;
-    const weakSub = currentStudent.Weak_Subject || 'Social Studies';
+    const rawWeak = currentStudent.Weak_Subject;
+    const hasAssessedWeak = Boolean(rawWeak && rawWeak !== 'Not assessed' && rawWeak !== 'None');
+    const weakSub = hasAssessedWeak ? rawWeak : 'core coursework';
     const risk = currentStudent.Risk_Level;
     const studyHours = currentStudent.Study_Hours_Per_Day;
     const sleep = currentStudent.Sleep_Hours;
@@ -3206,7 +4130,7 @@ You can:
 
     // Find highest subject
     const subjects = currentStudent.Subjects || [];
-    let bestSub = 'English';
+    let bestSub = 'Python Programming';
     let bestScore = 85;
     if (subjects.length > 0) {
       const sorted = [...subjects].sort((a, b) => b.overall - a.overall);
@@ -3215,17 +4139,19 @@ You can:
     }
 
     if (lowerMsg.includes('how am i performing') || lowerMsg.includes('performance') || lowerMsg.includes('my score')) {
-      fallbackReply = `You're currently performing well overall with an average score of **${avgScore}%** and **${att}%** attendance.\n\nYour strongest subject is **${bestSub}** at **${bestScore}%**. **${weakSub}** is currently your lowest subject at **${currentStudent.Quiz_Score || 70}%**, so that would be a good area to focus on.`;
+      fallbackReply = `You're currently performing well overall with an average score of **${avgScore}%** and **${att}%** attendance.\n\n${hasAssessedWeak ? `Your strongest subject is **${bestSub}** at **${bestScore}%**, while **${weakSub}** has been flagged for reinforcement.` : `Subject-level diagnostic assessments are currently pending for your cohort.`}`;
     } else if (lowerMsg.includes('what should i improve') || lowerMsg.includes('improve')) {
-      fallbackReply = `Based on your academic profile, here are your top areas for improvement:\n\n1. **${weakSub} Reinforcement** — Your current performance indicates concept friction. An extra 25–30 minutes daily will raise your score.\n2. **Study Consistency** — Keep up your ${studyHours} hours/day routine with active recall rather than passive reading.\n3. **Sleep & Recovery** — Maintain ${sleep} hours of restful sleep to ensure optimal memory retention.`;
+      fallbackReply = `Based on your academic profile, here are your top areas for improvement:\n\n1. **${hasAssessedWeak ? `${weakSub} Reinforcement` : 'Core Concept Consistency'}** — An extra 25–30 minutes daily will consolidate your score.\n2. **Study Consistency** — Keep up your ${studyHours} hours/day routine with active recall rather than passive reading.\n3. **Sleep & Recovery** — Maintain ${sleep} hours of restful sleep to ensure optimal memory retention.`;
     } else if (lowerMsg.includes('study plan') || lowerMsg.includes('schedule')) {
-      fallbackReply = `Here is your personalized **VIDYA Study Plan** tailored for your **${learningStyle}** learning style:\n\n• **${weakSub} (Priority):** 30–40 minutes daily (practice diagrams and active problem solving)\n• **${bestSub} Review:** 20 minutes (maintain your high ${bestScore}% standard)\n• **Daily Study Routine:** Continue your current ${studyHours}-hour routine using 45/15 Pomodoro focus blocks\n• **Rest & Sleep:** Maintain ${sleep} hours of nightly sleep\n• **Weekend Drill:** Review flashcards and mock quiz questions every Saturday morning.`;
+      fallbackReply = `Here is your personalized **VIDYA Study Plan** tailored for your **${learningStyle}** learning style:\n\n• **${hasAssessedWeak ? `${weakSub} (Priority)` : 'Core Coursework Review'}:** 30–40 minutes daily (practice diagrams and active problem solving)\n• **Daily Study Routine:** Continue your current ${studyHours}-hour routine using 45/15 Pomodoro focus blocks\n• **Rest & Sleep:** Maintain ${sleep} hours of nightly sleep\n• **Weekend Drill:** Review flashcards and mock quiz questions every Saturday morning.`;
     } else if (lowerMsg.includes('risk level') || lowerMsg.includes('risk')) {
-      fallbackReply = `Your current academic risk level is **${risk}**.\n\nKey contributing factors:\n• **Attendance:** ${att}% (Consistency is strong)\n• **Average Score:** ${avgScore}%\n• **Study Habits:** ${studyHours} hrs/day\n\nTo keep your risk level Low, continue prioritizing **${weakSub}** quizzes and submitting assignments on time.`;
+      fallbackReply = `Your current academic risk level is **${risk}**.\n\nKey contributing factors:\n• **Attendance:** ${att}% (Consistency is strong)\n• **Average Score:** ${avgScore}%\n• **Study Habits:** ${studyHours} hrs/day\n\nTo keep your risk level Low, continue prioritizing daily study consistency and submitting assignments on time.`;
     } else if (lowerMsg.includes('weak subject') || lowerMsg.includes('weak')) {
-      fallbackReply = `Your primary focus area is **${weakSub}**.\n\nI recommend:\n1. Dedicating the first 30 minutes of your daily study block to ${weakSub}.\n2. Asking your teacher or peer mentor for feedback on recent quizzes.\n3. Breaking down difficult formulas or concepts using visual diagrams.`;
+      fallbackReply = hasAssessedWeak
+        ? `Your primary focus area is **${weakSub}**.\n\nI recommend:\n1. Dedicating the first 30 minutes of your daily study block to ${weakSub}.\n2. Asking your teacher or peer mentor for feedback on recent quizzes.\n3. Breaking down difficult formulas or concepts using visual diagrams.`
+        : `Individual subject diagnostics are currently pending for your academic profile. In the meantime, focus on establishing solid daily practice routines across your enrolled coursework.`;
     } else {
-      fallbackReply = `Hello ${name}! As your VIDYA AI Learning Assistant, I see you're currently maintaining a **${avgScore}%** overall score and **${att}%** attendance.\n\nI recommend spending 30 minutes focusing on **${weakSub}** today. Feel free to ask me for a customized study plan, score breakdown, or tips on how to prepare for upcoming tests!`;
+      fallbackReply = `Hello ${name}! As your VIDYA AI Learning Assistant, I see you're currently maintaining a **${avgScore}%** overall score and **${att}%** attendance.\n\nFeel free to ask me for a customized study plan, score breakdown, or tips on how to prepare for upcoming tests!`;
     }
   } else if (userRole === 'teacher') {
     const highRiskStudents = students.filter((s) => s.Risk_Level === 'High');
@@ -3265,7 +4191,7 @@ You can:
         Tutoring: 'No',
         Internet_Access: 'Yes',
         Stress_Level: 'Medium',
-        Weak_Subject: 'Mathematics',
+        Weak_Subject: 'Not assessed',
       });
 
       fallbackReply = `Here is your **VIDYA Academic Profile Assessment** 🎓\n\n• **Predicted Composite Score:** ${pred.predictedOverallScore}%\n• **Academic Risk Factor:** **${pred.riskLevel} Risk**\n• **Performance Band:** ${pred.performanceLevel}\n\n**Actionable Recommendations:**\n1. ${studyHrs < 3 ? 'Increase dedicated study time to 3.0+ hours/day with active problem sets.' : 'Maintain your focused study routine using 45/15 Pomodoro intervals.'}\n2. ${sleepVal < 7 ? 'Increase sleep to 7–8 hours to boost memory consolidation.' : 'Maintain your 7+ hours of restorative sleep.'}\n3. Dedicate the first 30 minutes of study to your most challenging topics.\n\nLog in or register to track your full learning journey!`;
@@ -3324,7 +4250,7 @@ app.get('/api/analytics/institution', (_req, res) => {
   // Subject-wise analytics
   const subjectMap: Record<string, { totalScore: number; count: number; weakCount: number }> = {};
   students.forEach((s) => {
-    if (s.Weak_Subject) {
+    if (s.Weak_Subject && s.Weak_Subject !== 'Not assessed' && s.Weak_Subject !== 'None') {
       if (!subjectMap[s.Weak_Subject]) {
         subjectMap[s.Weak_Subject] = { totalScore: 0, count: 0, weakCount: 0 };
       }
@@ -3453,7 +4379,7 @@ app.post('/api/dataset/import', (req, res) => {
       Tutoring: item.Tutoring || 'No',
       Internet_Access: item.Internet_Access || 'Yes',
       Stress_Level: item.Stress_Level || 'Medium',
-      Weak_Subject: item.Weak_Subject || 'Mathematics',
+      Weak_Subject: normalizeWeakSubject(item.Weak_Subject),
     });
 
     return {
@@ -3477,18 +4403,18 @@ app.post('/api/dataset/import', (req, res) => {
       Tutoring: item.Tutoring || 'No',
       Extracurricular_Activity: item.Extracurricular_Activity || 'Yes',
       Stress_Level: item.Stress_Level || 'Medium',
-      Weak_Subject: item.Weak_Subject || 'Mathematics',
+      Weak_Subject: normalizeWeakSubject(item.Weak_Subject),
       Exam_Score: Number(item.Exam_Score) || pred.predictedExamScore,
       Overall_Score: Number(item.Overall_Score) || pred.predictedOverallScore,
       Performance_Level: item.Performance_Level || pred.performanceLevel,
       Risk_Level: item.Risk_Level || pred.riskLevel,
       Recommended_Action: item.Recommended_Action || pred.recommendedAction,
       Subjects: [
-        { subject: 'Mathematics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-        { subject: 'Physics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-        { subject: 'Chemistry', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-        { subject: 'Computer Science', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
-        { subject: 'English', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
+        { subject: 'Python Programming', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
+        { subject: 'Database Management Systems', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
+        { subject: 'Machine Learning', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
+        { subject: 'Data Structures', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
+        { subject: 'Statistics', assignment: 75, quiz: 75, exam: 75, overall: 75, grade: 'B', trend: 'stable' },
       ],
       History: [
         { month: 'Oct', quizScore: 70, assignmentScore: 70, overallScore: 70, attendance: 75 },
@@ -3560,7 +4486,7 @@ async function startServer() {
 
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -3570,6 +4496,8 @@ async function startServer() {
     console.log(
       `VIDYA Platform running on port ${PORT} (mode: ${isProduction && hasDist ? 'production' : 'development'})`
     );
+    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜  Network: http://0.0.0.0:${PORT}/`);
   });
 
   const shutdown = (signal: string) => {

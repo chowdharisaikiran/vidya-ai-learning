@@ -1,4 +1,5 @@
-export type UserRole = 'student' | 'teacher' | 'admin' | 'pending';
+export type UserRole = 'platform_owner' | 'institution_admin' | 'admin' | 'teacher' | 'student' | 'pending';
+export * from './platform';
 
 export interface UserAccount {
   id: string;
@@ -73,6 +74,7 @@ export interface StudentData {
   Extracurricular_Activity: 'Yes' | 'No';
   Stress_Level: StressLevel;
   Weak_Subject: string;
+  Weak_Subject_Label?: string;
   Exam_Score: number; // 0 - 100
   Overall_Score: number; // 0 - 100
   Performance_Level: PerformanceLevel;

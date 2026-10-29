@@ -171,7 +171,7 @@ export const AdminPredictionView: React.FC = () => {
     { name: 'Tutoring', type: 'Binary', desc: 'Yes or No active mentor/coaching enrollment' },
     { name: 'Extracurricular_Activity', type: 'Binary', desc: 'Yes or No participation in sports/clubs' },
     { name: 'Stress_Level', type: 'Ordinal', desc: 'Low, Medium, High examination anxiety' },
-    { name: 'Weak_Subject', type: 'Categorical', desc: 'Mathematics, Physics, Chemistry, CS, English' },
+    { name: 'Weak_Subject', type: 'Categorical', desc: 'Valid institutional subject (Python, DBMS, ML, etc.) or Not assessed' },
     { name: 'Exam_Score', type: 'Float (0 - 100)', desc: 'Summative comprehensive term test outcome' },
     { name: 'Overall_Score', type: 'Float (0 - 100)', desc: 'Weighted composite final academic score' },
     { name: 'Performance_Level', type: 'Categorical', desc: 'Excellent, Good, Average, Below Average, Critical' },

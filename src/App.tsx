@@ -12,6 +12,8 @@ import { LandingPage } from './views/LandingPage';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
 import { VidyaChatbot } from './components/VidyaChatbot';
+import { PlatformOwnerDashboard } from './views/platform/PlatformOwnerDashboard';
+import { ShieldAlert } from 'lucide-react';
 
 // Student Views
 import { StudentDashboard } from './views/student/StudentDashboard';
@@ -39,6 +41,7 @@ import { AdminInstitutionAnalyticsView } from './views/admin/AdminInstitutionAna
 import { AdminPredictionView } from './views/admin/AdminPredictionView';
 import { AdminProfileView } from './views/admin/AdminProfileView';
 import { AdminSettingsView } from './views/admin/AdminSettingsView';
+import { AdminSubscriptionView } from './views/admin/AdminSubscriptionView';
 
 // Helper to map pathname to authenticated dashboard tab
 function getTabFromPath(pathname: string, role: string): string {
@@ -74,6 +77,7 @@ function getTabFromPath(pathname: string, role: string): string {
     if (clean === 'teachers') return 'teachers';
     if (clean === 'analytics' || clean === 'institution-analytics') return 'institution-analytics';
     if (clean === 'prediction' || clean === 'predictions' || clean === 'ai-prediction') return 'ai-prediction';
+    if (clean === 'subscription' || clean === 'subscriptions' || clean === 'billing') return 'subscription';
     if (clean === 'profile') return 'profile';
     if (clean === 'settings') return 'settings';
   }
@@ -211,6 +215,10 @@ const MainLayout: React.FC = () => {
         case 'predictions':
         case 'ai-prediction':
           return <AdminPredictionView />;
+        case 'subscription':
+        case 'subscriptions':
+        case 'billing':
+          return <AdminSubscriptionView onNavigate={handleNavigate} />;
         case 'profile':
           return <AdminProfileView />;
         case 'settings':
@@ -252,12 +260,17 @@ const getInitialPublicView = (): 'landing' | 'login' | 'signup' => {
   const path = window.location.pathname.toLowerCase();
   if (path === '/login' || path.startsWith('/login/')) return 'login';
   if (path === '/signup' || path === '/register' || path.startsWith('/signup/')) return 'signup';
+  // If navigating directly to protected /platform route while logged out, default immediately to login
+  if (path === '/platform' || path.startsWith('/platform/')) return 'login';
   return 'landing';
 };
 
 const AppContent: React.FC = () => {
-  const { user, role } = useAuth();
+  const { user, role, authLoading, logout, switchTestRole } = useAuth();
   const [publicView, setPublicView] = useState<'landing' | 'login' | 'signup'>(getInitialPublicView);
+  const [currentPath, setCurrentPath] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
 
   // Sync public URL on state changes or popstate
   const navigatePublic = (view: 'landing' | 'login' | 'signup', pushHistory = true) => {
@@ -266,6 +279,7 @@ const AppContent: React.FC = () => {
       const targetPath = view === 'landing' ? '/' : `/${view}`;
       if (window.location.pathname !== targetPath) {
         window.history.pushState({ view }, '', targetPath);
+        setCurrentPath(targetPath);
       }
     }
   };
@@ -275,16 +289,130 @@ const AppContent: React.FC = () => {
 
     const handlePopState = () => {
       setPublicView(getInitialPublicView());
+      setCurrentPath(window.location.pathname);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // Authenticated flow
+  const isPlatformRoute = currentPath.startsWith('/platform');
+
+  // 1. Session verification loading state for /platform/* routes
+  // Shows clean loading screen rather than briefly flashing protected dashboard
+  if (authLoading && isPlatformRoute) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white font-sans">
+        <div className="w-12 h-12 border-4 border-violet-500/20 border-t-violet-500 rounded-full animate-spin mb-4" />
+        <h2 className="text-base sm:text-lg font-semibold tracking-tight text-white">
+          Verifying Platform Authorization...
+        </h2>
+        <p className="text-xs text-slate-400 mt-1">Checking secure session and tenant management credentials</p>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated user attempting to access /platform/* routes
+  // Redirect to login page immediately without rendering the protected dashboard
+  if (!user && isPlatformRoute) {
+    return (
+      <>
+        <LoginView
+          onBackToLanding={() => navigatePublic('landing')}
+          onGoToSignup={() => navigatePublic('signup')}
+        />
+        <VidyaChatbot />
+      </>
+    );
+  }
+
+  // 3. Authenticated flow
   if (user) {
+    if (isPlatformRoute) {
+      // Strictly verify platform_owner role
+      if (role === 'platform_owner') {
+        return (
+          <>
+            <PlatformOwnerDashboard
+              onSwitchToInstitutionalAdmin={() => {
+                if (window.location.pathname.startsWith('/platform')) {
+                  window.history.pushState({ tab: 'dashboard' }, '', '/dashboard');
+                  setCurrentPath('/dashboard');
+                }
+                switchTestRole('admin');
+              }}
+              onSwitchRole={(r) => {
+                if (r !== 'platform_owner' && window.location.pathname.startsWith('/platform')) {
+                  window.history.pushState({ tab: 'dashboard' }, '', '/dashboard');
+                  setCurrentPath('/dashboard');
+                }
+                switchTestRole(r);
+              }}
+            />
+            <VidyaChatbot />
+          </>
+        );
+      }
+
+      // Access Denied: User is authenticated, but NOT a platform_owner
+      return (
+        <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 text-white font-sans">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl text-center">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-4">
+              <ShieldAlert className="w-7 h-7" />
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[11px] font-semibold uppercase tracking-wider mb-2">
+              403 Forbidden
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+              Access Denied
+            </h2>
+            <p className="mt-2 text-xs sm:text-sm text-slate-400 leading-relaxed">
+              Your account (<span className="text-slate-200 font-mono font-medium">{user.email}</span>) is authenticated as <span className="text-white font-semibold capitalize">{user.role || role}</span>, but does not have verified <span className="text-violet-400 font-semibold">Platform Owner</span> privileges.
+            </p>
+            <div className="mt-6 flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  window.history.pushState({ tab: 'dashboard' }, '', '/dashboard');
+                  setCurrentPath('/dashboard');
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-semibold text-xs transition-colors shadow-sm cursor-pointer"
+              >
+                Return to {((user.role || role || 'institutional') as string).toUpperCase()} Dashboard
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="w-full py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 font-medium text-xs transition-colors border border-slate-700/80 cursor-pointer"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Platform Owner navigating to root or /dashboard
+    if (role === 'platform_owner') {
+      return (
+        <>
+          <PlatformOwnerDashboard
+            onSwitchToInstitutionalAdmin={() => switchTestRole('admin')}
+            onSwitchRole={(r) => switchTestRole(r)}
+          />
+          <VidyaChatbot />
+        </>
+      );
+    }
+
     // If user's institutional role setup is incomplete or pending, show safe access screen
-    if (role === 'pending' || !role || (role !== 'admin' && role !== 'teacher' && role !== 'student')) {
+    if (
+      role === 'pending' ||
+      !role ||
+      (role !== 'admin' && role !== 'institution_admin' && role !== 'teacher' && role !== 'student')
+    ) {
       return (
         <>
           <RolePendingView />
@@ -293,7 +421,7 @@ const AppContent: React.FC = () => {
       );
     }
 
-    // Role is assigned: route to appropriate dashboard
+    // Role is assigned: route to appropriate institutional dashboard
     return (
       <>
         <MainLayout />

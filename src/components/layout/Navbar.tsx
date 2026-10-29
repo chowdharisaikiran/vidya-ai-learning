@@ -25,12 +25,27 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
     setSelectedStudentId,
     isSupabaseConnected,
     setSupabaseConnected,
+    switchTestRole,
     logout,
   } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
-  const roleBadgeConfig = {
+  const roleBadgeConfig: Record<string, any> = {
+    platform_owner: {
+      label: 'Platform Owner HQ',
+      bg: 'bg-violet-50',
+      text: 'text-violet-700',
+      border: 'border-violet-200',
+      icon: ShieldAlert,
+    },
+    institution_admin: {
+      label: 'Institution Admin',
+      bg: 'bg-indigo-50',
+      text: 'text-indigo-700',
+      border: 'border-indigo-200',
+      icon: ShieldAlert,
+    },
     student: {
       label: 'Student Portal',
       bg: 'bg-blue-50',
@@ -61,7 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
     },
   };
 
-  const currentRoleBadge = role ? roleBadgeConfig[role] : roleBadgeConfig.student;
+  const currentRoleBadge = role && roleBadgeConfig[role] ? roleBadgeConfig[role] : roleBadgeConfig.student;
   const RoleIcon = currentRoleBadge.icon;
 
   const notifications: Array<{
@@ -255,13 +270,26 @@ export const Navbar: React.FC<NavbarProps> = ({ onMobileMenuToggle }) => {
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 space-y-1">
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      switchTestRole('platform_owner');
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <span>Platform Owner HQ</span>
+                    <span className="text-[10px] bg-violet-200 text-violet-800 px-1.5 py-0.2 rounded font-bold">
+                      SaaS
+                    </span>
+                  </button>
+
                   <button
                     onClick={() => {
                       setShowProfileMenu(false);
                       logout();
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
                   >
                     <LogOut className="w-4 h-4" />
                     <span>Sign Out</span>

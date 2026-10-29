@@ -102,7 +102,7 @@ export const TeacherSettingsView: React.FC<TeacherSettingsViewProps> = ({ onNavi
       Tutoring: tutoringEnabled ? 'Yes' : selectedStudent.Tutoring || 'No',
       Internet_Access: selectedStudent.Internet_Access || 'Yes',
       Stress_Level: selectedStudent.Stress_Level || 'Medium',
-      Weak_Subject: selectedStudent.Weak_Subject || 'Mathematics',
+      Weak_Subject: selectedStudent.Weak_Subject && selectedStudent.Weak_Subject !== 'None' ? selectedStudent.Weak_Subject : 'Not assessed',
     });
   }, [selectedStudent, attendanceOffset, studyHoursOffset, tutoringEnabled]);
 
@@ -401,7 +401,9 @@ export const TeacherSettingsView: React.FC<TeacherSettingsViewProps> = ({ onNavi
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase font-bold">Weak Subject</span>
-                      <span className="font-semibold text-rose-700 text-sm">{selectedStudent.Weak_Subject}</span>
+                      <span className={`text-sm ${selectedStudent.Weak_Subject && selectedStudent.Weak_Subject !== 'Not assessed' && selectedStudent.Weak_Subject !== 'None' ? 'font-semibold text-rose-700' : 'text-slate-400 italic'}`}>
+                        {selectedStudent.Weak_Subject && selectedStudent.Weak_Subject !== 'None' ? selectedStudent.Weak_Subject : 'Not assessed'}
+                      </span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase font-bold">Current Risk</span>

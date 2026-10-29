@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import campusBg from '../assets/images/vidya_academic_campus_bg.svg';
 import { VidyaLogo } from '../components/common/VidyaLogo';
@@ -13,8 +13,10 @@ import {
   ArrowLeft,
   AlertCircle,
   ShieldCheck,
+  KeyRound,
 } from 'lucide-react';
 import { apiUrl } from '../lib/apiConfig';
+import { getSupabaseClient } from '../lib/supabase';
 
 interface LoginViewProps {
   onBackToLanding?: () => void;
@@ -37,6 +39,66 @@ export const LoginView: React.FC<LoginViewProps> = ({ onBackToLanding, onGoToSig
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSubmitted, setForgotSubmitted] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
+
+  // Recovery mode (when opening recovery magic link / reset password email)
+  const [isRecoveryMode, setIsRecoveryMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.hash.includes('type=recovery') ||
+      window.location.search.includes('type=recovery')
+    );
+  });
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client) return;
+    const { data: { subscription } } = client.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveryMode(true);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSetNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      setErrorMessage('New password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('Passwords do not match. Please verify and try again.');
+      return;
+    }
+
+    setSettingPassword(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Authentication client unavailable.');
+      const { error } = await client.auth.updateUser({ password: newPassword });
+      if (error) {
+        setErrorMessage(error.message);
+      } else {
+        setSuccessMessage('Password successfully updated! You can now sign in with your new password.');
+        setIsRecoveryMode(false);
+        setPassword(newPassword);
+        if (typeof window !== 'undefined' && window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to update password.');
+    } finally {
+      setSettingPassword(false);
+    }
+  };
 
   const handleSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,112 +207,210 @@ export const LoginView: React.FC<LoginViewProps> = ({ onBackToLanding, onGoToSig
             </div>
           )}
 
-          <div className="mb-5 text-center">
-            <h2 className="text-base font-bold text-slate-900">Sign In to VIDYA</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Enter your email or institutional credentials to access your portal.
-            </p>
-          </div>
+          {isRecoveryMode ? (
+            <div>
+              <div className="mb-5 text-center">
+                <div className="w-12 h-12 mx-auto rounded-2xl bg-violet-100 text-violet-700 flex items-center justify-center mb-3">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <h2 className="text-base font-bold text-slate-900">Set New Account Password</h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Enter and confirm your new secure password for this verified session.
+                </p>
+              </div>
 
-          {/* Alert Messages */}
-          {errorMessage && (
-            <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-medium text-rose-700 flex items-start gap-2.5 animate-in fade-in">
-              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{errorMessage}</span>
+              {/* Alert Messages */}
+              {errorMessage && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-medium text-rose-700 flex items-start gap-2.5 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {successMessage && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>{successMessage}</span>
+                </div>
+              )}
+
+              <form className="space-y-4" onSubmit={handleSetNewPassword}>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    New Password
+                  </label>
+                  <div className="relative rounded-xl">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock className="h-4 w-4" />
+                    </div>
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      className="block w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white text-slate-900 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Confirm New Password
+                  </label>
+                  <div className="relative rounded-xl">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock className="h-4 w-4" />
+                    </div>
+                    <input
+                      type={showNewPassword ? 'text' : 'password'}
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter new password"
+                      className="block w-full pl-10 pr-3.5 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white text-slate-900 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <button
+                    type="submit"
+                    disabled={settingPassword}
+                    className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 shadow-md shadow-violet-500/20 transition-all disabled:opacity-70 cursor-pointer"
+                  >
+                    {settingPassword ? 'Saving Password...' : 'Save New Password & Continue'}
+                  </button>
+                </div>
+
+                <div className="text-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsRecoveryMode(false)}
+                    className="text-xs text-slate-500 hover:text-slate-700 underline cursor-pointer"
+                  >
+                    Cancel and return to sign in
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-5 text-center">
+                <h2 className="text-base font-bold text-slate-900">Sign In to VIDYA</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Enter your email or institutional credentials to access your portal.
+                </p>
+              </div>
+
+              {/* Alert Messages */}
+              {errorMessage && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-medium text-rose-700 flex items-start gap-2.5 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              {successMessage && (
+                <div className="mb-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>{successMessage}</span>
+                </div>
+              )}
+
+              {/* Sign In Form */}
+              <form className="space-y-4" onSubmit={handleSignInSubmit}>
+                <div>
+                  <label htmlFor="username" className="block text-xs font-bold text-slate-700 mb-1.5">
+                    Email Address or Username
+                  </label>
+                  <div className="relative rounded-xl">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Mail className="h-4 w-4" />
+                    </div>
+                    <input
+                      id="username"
+                      name="username"
+                      type="text"
+                      required
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="e.g. scholar@vidya.edu or username"
+                      className="block w-full pl-10 pr-3.5 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-900 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="password" className="block text-xs font-bold text-slate-700">
+                      Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotSubmitted(false);
+                        setForgotEmail('');
+                        setShowForgotModal(true);
+                      }}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                    >
+                      Forgot Password?
+                    </button>
+                  </div>
+                  <div className="relative rounded-xl">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock className="h-4 w-4" />
+                    </div>
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="block w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-900 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md shadow-blue-500/20 transition-all disabled:opacity-70 cursor-pointer"
+                  >
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Signing In...
+                      </span>
+                    ) : (
+                      <>
+                        <span>Sign In to VIDYA</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
           )}
-
-          {successMessage && (
-            <div className="mb-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs font-medium text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              <span>{successMessage}</span>
-            </div>
-          )}
-
-          {/* Sign In Form */}
-          <form className="space-y-4" onSubmit={handleSignInSubmit}>
-            <div>
-              <label htmlFor="username" className="block text-xs font-bold text-slate-700 mb-1.5">
-                Email Address or Username
-              </label>
-              <div className="relative rounded-xl">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <Mail className="h-4 w-4" />
-                </div>
-                <input
-                  id="username"
-                  name="username"
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="e.g. scholar@vidya.edu or username"
-                  className="block w-full pl-10 pr-3.5 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-900 transition-all"
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="password" className="block text-xs font-bold text-slate-700">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForgotSubmitted(false);
-                    setForgotEmail('');
-                    setShowForgotModal(true);
-                  }}
-                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-              <div className="relative rounded-xl">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                  <Lock className="h-4 w-4" />
-                </div>
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  className="block w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-900 transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-md shadow-blue-500/20 transition-all disabled:opacity-70 cursor-pointer"
-              >
-                {loading ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Signing In...
-                  </span>
-                ) : (
-                  <>
-                    <span>Sign In to VIDYA</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
 
           {/* Create Account Link */}
           {onGoToSignup && (
@@ -267,6 +427,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onBackToLanding, onGoToSig
               </p>
             </div>
           )}
+
+          {/* Platform Owner Authorization Notice (Zero Bypass) */}
+          <div className="mt-3 pt-3 border-t border-slate-100 text-center">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-500 font-medium">
+              <ShieldCheck className="w-3.5 h-3.5 text-violet-600" />
+              <span>Platform Owner (SaaS HQ) requires verified credentials</span>
+            </div>
+          </div>
 
 
           {/* Public AI assessment callout for visitors */}

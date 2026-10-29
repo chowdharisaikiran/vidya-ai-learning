@@ -63,7 +63,7 @@ export const StudentPredictionView: React.FC = () => {
       Tutoring: tutoring,
       Internet_Access: internet,
       Stress_Level: stressLevel,
-      Weak_Subject: student?.Weak_Subject || 'Mathematics',
+      Weak_Subject: student?.Weak_Subject && student.Weak_Subject !== 'None' ? student.Weak_Subject : 'Not assessed',
     });
   }, [
     attendance,

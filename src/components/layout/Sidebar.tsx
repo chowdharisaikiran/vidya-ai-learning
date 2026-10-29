@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   UserCheck,
   Settings,
+  CreditCard,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -69,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'teachers', label: 'Teachers', icon: BookOpen },
       { id: 'institution-analytics', label: 'Institution Analytics', icon: TrendingUp },
       { id: 'ai-prediction', label: 'AI Prediction', icon: Binary },
+      { id: 'subscription', label: 'Subscription', icon: CreditCard },
       { id: 'profile', label: 'Profile', icon: User },
       { id: 'settings', label: 'Settings', icon: Settings },
     ];
@@ -157,6 +159,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Platform Owner Console shortcut for administrator */}
+          {role === 'admin' && (
+            <div className="pt-2 px-3">
+              <button
+                type="button"
+                onClick={() => {
+                  window.history.pushState({ tab: 'overview' }, '', '/platform/overview');
+                  window.dispatchEvent(new PopStateEvent('popstate'));
+                }}
+                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-violet-50 hover:bg-violet-100 border border-violet-200 text-xs font-bold text-violet-800 transition-colors cursor-pointer shadow-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-violet-600 animate-pulse" />
+                  <span>Platform Owner HQ</span>
+                </div>
+                <span className="text-[10px] bg-violet-200 text-violet-900 px-1.5 py-0.5 rounded font-mono font-bold">
+                  SaaS
+                </span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* User preview & Logout footer */}
