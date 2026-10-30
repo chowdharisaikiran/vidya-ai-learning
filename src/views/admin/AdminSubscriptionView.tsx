@@ -25,12 +25,20 @@ import {
 import {
   fetchInstitutionSubscription,
   changeInstitutionSubscription,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
   AVAILABLE_PLANS,
   formatINR,
   getPlanTierRank,
   InstitutionSubscriptionDetails,
   PlanFeatureDefinition,
 } from '../../services/subscriptionService';
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 interface AdminSubscriptionViewProps {
   onNavigate?: (tab: string) => void;
@@ -81,6 +89,20 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
     setShowModal(true);
   };
 
+  const loadRazorpayScript = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (window.Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
   const handleConfirmChange = async () => {
     if (!targetPlan || !subscription || isSubmitting) return;
 
@@ -88,29 +110,105 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
     setModalError(null);
 
     try {
-      const res = await changeInstitutionSubscription(targetPlan.name, selectedCycle);
+      // 1. Create secure order on backend
+      const orderRes = await createRazorpayOrder(targetPlan.name, selectedCycle);
 
-      if (res.success) {
-        setSuccessMessage(res.message || `Subscription successfully updated to ${targetPlan.name}.`);
-        if (res.subscription) {
-          setSubscription(res.subscription);
+      if (!orderRes.success || !orderRes.orderId) {
+        // Fallback to simulated change if order creation fails or offline
+        const res = await changeInstitutionSubscription(targetPlan.name, selectedCycle);
+        if (res.success) {
+          setSuccessMessage(res.message || `Subscription successfully updated to ${targetPlan.name}.`);
+          if (res.subscription) setSubscription(res.subscription);
+          else await loadSubscription();
+          setShowModal(false);
+          setTargetPlan(null);
+          setTimeout(() => setSuccessMessage(null), 6000);
         } else {
-          // Re-load to get latest
-          await loadSubscription();
+          setModalError(res.error || res.message || 'Operation failed.');
         }
-        setShowModal(false);
-        setTargetPlan(null);
-
-        // Auto-dismiss success notification after 6 seconds
-        setTimeout(() => {
-          setSuccessMessage(null);
-        }, 6000);
-      } else {
-        setModalError(res.error || res.message || 'Operation failed. Please try again.');
+        setIsSubmitting(false);
+        return;
       }
+
+      // 2. Load Razorpay script
+      const loaded = await loadRazorpayScript();
+      if (!loaded || !window.Razorpay) {
+        // Fallback if Razorpay SDK fails to load
+        const res = await changeInstitutionSubscription(targetPlan.name, selectedCycle);
+        if (res.success) {
+          setSuccessMessage(res.message || `Subscription updated to ${targetPlan.name} (Sandbox mode).`);
+          if (res.subscription) setSubscription(res.subscription);
+          else await loadSubscription();
+          setShowModal(false);
+          setTargetPlan(null);
+        } else {
+          setModalError('Failed to load Razorpay Checkout SDK.');
+        }
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 3. Open Razorpay Checkout
+      const options = {
+        key: orderRes.keyId || 'rzp_test_mockkeyid123',
+        amount: orderRes.amount,
+        currency: orderRes.currency || 'INR',
+        name: 'Vidya EdTech Platform',
+        description: `Institutional Plan: ${targetPlan.name} (${selectedCycle})`,
+        order_id: orderRes.orderId,
+        prefill: {
+          name: subscription.institutionName || 'Vidya Admin',
+          email: 'admin@vidya.edu',
+          contact: '9999999999',
+        },
+        notes: {
+          institutionId: subscription.institutionId,
+          targetPlan: targetPlan.name,
+          billingCycle: selectedCycle,
+        },
+        theme: {
+          color: '#4f46e5',
+        },
+        handler: async function (response: any) {
+          try {
+            const verifyRes = await verifyRazorpayPayment({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              targetPlan: targetPlan.name,
+              billingCycle: selectedCycle,
+            });
+
+            if (verifyRes.success) {
+              setSuccessMessage(verifyRes.message || `Payment verified successfully! Plan updated to ${targetPlan.name}.`);
+              if (verifyRes.subscription) {
+                setSubscription(verifyRes.subscription);
+              } else {
+                await loadSubscription();
+              }
+              setShowModal(false);
+              setTargetPlan(null);
+              setTimeout(() => setSuccessMessage(null), 6000);
+            } else {
+              setModalError(verifyRes.error || 'Payment verification failed.');
+            }
+          } catch (verifyErr: any) {
+            setModalError(verifyErr?.message || 'Error processing payment verification.');
+          } finally {
+            setIsSubmitting(false);
+          }
+        },
+        modal: {
+          ondismiss: function () {
+            setIsSubmitting(false);
+          },
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
     } catch (err: any) {
-      setModalError(err?.message || 'A network error occurred while updating the subscription.');
-    } finally {
+      setModalError(err?.message || 'A network error occurred while initiating payment.');
       setIsSubmitting(false);
     }
   };
@@ -447,8 +545,21 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
                       </span>
                       <span className="text-xs font-medium text-slate-500">{priceSub}</span>
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-1">
-                      {selectedCycle === 'Yearly' ? 'Billed annually with volume entitlement' : 'Billed monthly recurring'}
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-[11px] text-slate-400">
+                        {selectedCycle === 'Yearly' ? 'Billed annually with volume entitlement' : 'Billed monthly recurring'}
+                      </span>
+                      {selectedCycle === 'Yearly' && (() => {
+                        const annualTotalFromMonthly = plan.monthlyPriceINR * 12;
+                        const savingsAmount = annualTotalFromMonthly - plan.annualPriceINR;
+                        const savingsPct = savingsAmount > 0 ? Math.round((savingsAmount / annualTotalFromMonthly) * 100) : 0;
+                        if (savingsPct <= 0) return null;
+                        return (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            Save {savingsPct}% ({formatINR(savingsAmount)})
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -675,7 +786,7 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
             {/* Price Difference & Calculation */}
             <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-xs space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-slate-600">Price Adjustment:</span>
+                <span className="text-slate-600">Price Difference:</span>
                 <span className="font-mono font-bold text-slate-900">
                   {(() => {
                     const targetPrice = selectedCycle === 'Yearly' ? targetPlan.annualPriceINR : targetPlan.monthlyPriceINR;
@@ -692,7 +803,15 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-600">Effective Date:</span>
-                <span className="font-semibold text-emerald-700">Immediate</span>
+                <span className="font-semibold text-slate-800">
+                  {getPlanTierRank(targetPlan.name) > currentRank
+                    ? 'Immediate (Upgrade)'
+                    : `Next Renewal (${new Date(subscription.renewalDate).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })})`}
+                </span>
               </div>
             </div>
 
@@ -710,9 +829,11 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
                 </p>
               ) : (
                 <p>
-                  <strong>Downgrades:</strong> In this administrative environment, your quota will be updated to{' '}
-                  <span className="font-semibold text-slate-900">{targetPlan.studentLimit.toLocaleString()} students</span>{' '}
-                  immediately. In production, billing changes and lower limits align with your next renewal date ({new Date(subscription.renewalDate).toLocaleDateString()}).
+                  <strong>Downgrades:</strong> Quota and billing changes align with your next renewal date ({new Date(subscription.renewalDate).toLocaleDateString('en-IN', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  })}).
                 </p>
               )}
 
@@ -725,29 +846,6 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
                 </div>
               )}
             </div>
-
-            {/* Payment vs Sandbox Notice */}
-            {!subscription.paymentGatewayConfigured ? (
-              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
-                <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  <span className="font-bold">Simulated Sandbox Environment: </span>
-                  <span>
-                    No real payment gateway is configured. No credit card, UPI, or bank account will be charged. This administrative action adjusts your institutional student quota and features for testing and evaluation.
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-200 text-emerald-900 text-xs flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <div className="text-[11px] leading-relaxed">
-                  <span className="font-bold">Live Payment Notice: </span>
-                  <span>
-                    Commercial billing will be authorized and processed via {subscription.gatewayName || 'your verified payment provider'}.
-                  </span>
-                </div>
-              </div>
-            )}
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 pt-2">

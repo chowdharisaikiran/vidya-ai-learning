@@ -176,7 +176,12 @@ export const AdminUserRolesView: React.FC = () => {
   }, []);
 
   // Check if current user is an admin
-  if (currentAdmin && currentAdmin.role !== 'admin') {
+  const isAuthorizedAdmin =
+    currentAdmin?.role === 'admin' ||
+    currentAdmin?.role === 'institution_admin' ||
+    currentAdmin?.role === 'platform_owner';
+
+  if (currentAdmin && !isAuthorizedAdmin) {
     return (
       <div className="p-8 max-w-xl mx-auto my-12 text-center bg-white rounded-3xl border border-rose-200 shadow-xs space-y-4">
         <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 mx-auto flex items-center justify-center border border-rose-100">
@@ -362,7 +367,7 @@ export const AdminUserRolesView: React.FC = () => {
   const totalAdmins = profiles.filter((p) => p.role === 'admin').length;
 
   const sqlMigrationCode = `-- ==============================================================================
--- VIDYA PLATFORM: SECURE ROLE-BASED ACCESS CONTROL & DATASET MAPPING MIGRATION
+-- VIDYA PLATFORM: SECURE ROLE-BASED ACCESS CONTROL & NON-RECURSIVE RLS POLICIES
 -- ==============================================================================
 
 -- 1. EXTEND public.user_profiles WITH DATASET MAPPING COLUMNS
@@ -399,7 +404,51 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 3. ENABLE ROW LEVEL SECURITY ON ALL 11 TABLES
+-- 3. SECURITY DEFINER HELPER FUNCTIONS (Prevents RLS infinite recursion)
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT role FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('admin', 'institution_admin', 'super_admin', 'platform_owner')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_teacher_or_admin()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('teacher', 'admin', 'institution_admin', 'super_admin', 'platform_owner')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_student_id()
+RETURNS INTEGER LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT student_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_staff_id()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT staff_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.get_my_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_teacher_or_admin() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_my_student_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_my_staff_id() FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_teacher_or_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_student_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_staff_id() TO authenticated;
+
+-- 4. ENABLE ROW LEVEL SECURITY ON ALL 11 TABLES
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
@@ -411,6 +460,41 @@ ALTER TABLE public.predictions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff_attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
+
+-- 5. NON-RECURSIVE POLICIES: public.user_profiles
+DROP POLICY IF EXISTS "Users can read own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can view own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Admins can view all profiles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Admins can view all user profiles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Admins can update user profiles and roles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can update own name only" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users and admins can view profiles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Admins can update all profiles" ON public.user_profiles;
+
+CREATE POLICY "Users and admins can view profiles"
+  ON public.user_profiles FOR SELECT TO authenticated
+  USING (auth.uid() = id OR public.is_admin());
+
+CREATE POLICY "Users can insert own profile"
+  ON public.user_profiles FOR INSERT TO authenticated
+  WITH CHECK (auth.uid() = id AND role = 'student');
+
+CREATE POLICY "Users can update own profile"
+  ON public.user_profiles FOR UPDATE TO authenticated
+  USING (auth.uid() = id)
+  WITH CHECK (
+    auth.uid() = id
+    AND role = public.get_my_role()
+    AND student_id IS NOT DISTINCT FROM public.get_my_student_id()
+    AND staff_id IS NOT DISTINCT FROM public.get_my_staff_id()
+  );
+
+CREATE POLICY "Admins can update all profiles"
+  ON public.user_profiles FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 `;
 
   return (

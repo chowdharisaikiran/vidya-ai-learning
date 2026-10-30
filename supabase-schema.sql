@@ -175,34 +175,84 @@ ALTER TABLE recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance_summary ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 
+-- SECURITY DEFINER Helper Functions (Prevents RLS infinite recursion)
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT role FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('admin', 'institution_admin', 'super_admin', 'platform_owner')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_teacher_or_admin()
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('teacher', 'admin', 'institution_admin', 'super_admin', 'platform_owner')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_student_id()
+RETURNS INTEGER LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT student_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_staff_id()
+RETURNS TEXT LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, auth AS $$
+  SELECT staff_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.get_my_role() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.is_teacher_or_admin() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_my_student_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_my_staff_id() FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_teacher_or_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_student_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_staff_id() TO authenticated;
+
 -- User Profiles Isolation
 DO $$
 BEGIN
-  -- Authenticated users can view their own profile
+  -- Authenticated users can view their own profile, or admins can view all profiles
   DROP POLICY IF EXISTS "Users can read own profile" ON user_profiles;
-  CREATE POLICY "Users can read own profile" ON user_profiles FOR SELECT TO authenticated
-    USING (auth.uid() = id);
-
-  -- Administrators can view all user profiles
+  DROP POLICY IF EXISTS "Users can view own profile" ON user_profiles;
+  DROP POLICY IF EXISTS "Admins can view all profiles" ON user_profiles;
   DROP POLICY IF EXISTS "Admins can view all user profiles" ON user_profiles;
-  CREATE POLICY "Admins can view all user profiles" ON user_profiles FOR SELECT TO authenticated
-    USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'));
+  DROP POLICY IF EXISTS "Users and admins can view profiles" ON user_profiles;
+  CREATE POLICY "Users and admins can view profiles" ON user_profiles FOR SELECT TO authenticated
+    USING (auth.uid() = id OR public.is_admin());
+
+  -- Authenticated users can insert their own profile
+  DROP POLICY IF EXISTS "Users can insert own profile" ON user_profiles;
+  CREATE POLICY "Users can insert own profile" ON user_profiles FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = id AND role = 'student');
 
   -- Administrators can update user profiles, roles, and dataset mappings
   DROP POLICY IF EXISTS "Admins can update user profiles and roles" ON user_profiles;
-  CREATE POLICY "Admins can update user profiles and roles" ON user_profiles FOR UPDATE TO authenticated
-    USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'))
-    WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'));
+  DROP POLICY IF EXISTS "Admins can update all profiles" ON user_profiles;
+  CREATE POLICY "Admins can update all profiles" ON user_profiles FOR UPDATE TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
 
   -- Users can update only their own name, NOT their role or mappings
   DROP POLICY IF EXISTS "Users can update own name only" ON user_profiles;
-  CREATE POLICY "Users can update own name only" ON user_profiles FOR UPDATE TO authenticated
+  DROP POLICY IF EXISTS "Users can update own profile" ON user_profiles;
+  CREATE POLICY "Users can update own profile" ON user_profiles FOR UPDATE TO authenticated
     USING (auth.uid() = id)
     WITH CHECK (
       auth.uid() = id
-      AND role = (SELECT role FROM user_profiles WHERE id = auth.uid())
-      AND student_id IS NOT DISTINCT FROM (SELECT student_id FROM user_profiles WHERE id = auth.uid())
-      AND staff_id IS NOT DISTINCT FROM (SELECT staff_id FROM user_profiles WHERE id = auth.uid())
+      AND role = public.get_my_role()
+      AND student_id IS NOT DISTINCT FROM public.get_my_student_id()
+      AND staff_id IS NOT DISTINCT FROM public.get_my_staff_id()
     );
 
   DROP POLICY IF EXISTS "Public read connection_test" ON connection_test;
@@ -321,23 +371,23 @@ ALTER TABLE faculty_class_assignments ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Admins can view all faculty assignments" ON faculty_class_assignments;
 CREATE POLICY "Admins can view all faculty assignments"
   ON faculty_class_assignments FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can insert faculty assignments" ON faculty_class_assignments;
 CREATE POLICY "Admins can insert faculty assignments"
   ON faculty_class_assignments FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'));
+  WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Admins can delete faculty assignments" ON faculty_class_assignments;
 CREATE POLICY "Admins can delete faculty assignments"
   ON faculty_class_assignments FOR DELETE TO authenticated
-  USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND role = 'admin'));
+  USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Teachers can view assigned students" ON faculty_class_assignments;
 CREATE POLICY "Teachers can view assigned students"
   ON faculty_class_assignments FOR SELECT TO authenticated
   USING (
-    staff_id = (SELECT staff_id FROM user_profiles WHERE id = auth.uid())
-    AND (SELECT role FROM user_profiles WHERE id = auth.uid()) = 'teacher'
+    staff_id = public.get_my_staff_id()
+    AND public.get_my_role() = 'teacher'
   );
 

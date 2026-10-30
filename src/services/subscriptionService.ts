@@ -52,8 +52,8 @@ export const AVAILABLE_PLANS: PlanFeatureDefinition[] = [
   {
     id: 'plan_basic',
     name: 'Basic',
-    annualPriceINR: 199990, // ₹1,99,990/year
-    monthlyPriceINR: 19999,  // ₹19,999/month
+    annualPriceINR: 49990, // ₹49,990/year
+    monthlyPriceINR: 4999,  // ₹4,999/month
     studentLimit: 250,
     description: 'Essential academic tracking, automated attendance, and core student reports for small departments.',
     colorTheme: 'blue',
@@ -70,8 +70,8 @@ export const AVAILABLE_PLANS: PlanFeatureDefinition[] = [
   {
     id: 'plan_pro',
     name: 'Professional',
-    annualPriceINR: 499990, // ₹4,99,990/year
-    monthlyPriceINR: 49999,  // ₹49,999/month
+    annualPriceINR: 119990, // ₹1,19,990/year
+    monthlyPriceINR: 9999,  // ₹9,999/month
     studentLimit: 750,
     description: 'Advanced AI predictive risk forecasting, ML early intervention, and multi-department analytics.',
     recommended: true,
@@ -90,8 +90,8 @@ export const AVAILABLE_PLANS: PlanFeatureDefinition[] = [
   {
     id: 'plan_enterprise',
     name: 'Enterprise',
-    annualPriceINR: 1199990, // ₹11,99,990/year
-    monthlyPriceINR: 119999,  // ₹1,19,999/month
+    annualPriceINR: 299990, // ₹2,99,990/year
+    monthlyPriceINR: 24999,  // ₹24,999/month
     studentLimit: 2500,
     description: 'Full-scale institutional deployment with custom AI models, custom domain, and dedicated account management.',
     colorTheme: 'purple',
@@ -301,3 +301,162 @@ export async function changeInstitutionSubscription(
     };
   }
 }
+
+/**
+ * Fetch Razorpay configuration and public key ID
+ */
+export async function fetchRazorpayConfig(): Promise<{
+  success: boolean;
+  keyId?: string;
+  isConfigured?: boolean;
+  mode?: string;
+  error?: string;
+}> {
+  try {
+    const token = await getActiveAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(apiUrl('/api/admin/subscription/razorpay-config'), {
+      method: 'GET',
+      headers,
+    });
+    const parsed = await parseApiResponse<{
+      success: boolean;
+      keyId: string;
+      isConfigured: boolean;
+      mode: string;
+    }>(res, '/api/admin/subscription/razorpay-config');
+
+    if (parsed.ok && parsed.data) {
+      return {
+        success: true,
+        keyId: parsed.data.keyId,
+        isConfigured: parsed.data.isConfigured,
+        mode: parsed.data.mode,
+      };
+    }
+    return { success: false, error: parsed.error || 'Failed to fetch Razorpay config' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error fetching Razorpay config' };
+  }
+}
+
+/**
+ * Create a Razorpay order on the secure backend
+ */
+export async function createRazorpayOrder(
+  targetPlan: 'Basic' | 'Professional' | 'Enterprise',
+  billingCycle: 'Yearly' | 'Monthly'
+): Promise<{
+  success: boolean;
+  orderId?: string;
+  amount?: number;
+  currency?: string;
+  keyId?: string;
+  targetPlan?: string;
+  billingCycle?: string;
+  error?: string;
+}> {
+  try {
+    const token = await getActiveAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(apiUrl('/api/admin/subscription/create-razorpay-order'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ targetPlan, billingCycle }),
+    });
+
+    const parsed = await parseApiResponse<{
+      success: boolean;
+      orderId: string;
+      amount: number;
+      currency: string;
+      keyId: string;
+      targetPlan: string;
+      billingCycle: string;
+    }>(res, '/api/admin/subscription/create-razorpay-order');
+
+    if (parsed.ok && parsed.data && parsed.data.success) {
+      return {
+        success: true,
+        orderId: parsed.data.orderId,
+        amount: parsed.data.amount,
+        currency: parsed.data.currency,
+        keyId: parsed.data.keyId,
+        targetPlan: parsed.data.targetPlan,
+        billingCycle: parsed.data.billingCycle,
+      };
+    }
+
+    return { success: false, error: parsed.error ?? 'Failed to create Razorpay order.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error creating Razorpay order.' };
+  }
+}
+
+/**
+ * Verify Razorpay payment signature on backend and update subscription
+ */
+export async function verifyRazorpayPayment(verificationPayload: {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+  targetPlan: 'Basic' | 'Professional' | 'Enterprise';
+  billingCycle: 'Yearly' | 'Monthly';
+}): Promise<{
+  success: boolean;
+  message: string;
+  subscription?: InstitutionSubscriptionDetails;
+  error?: string;
+}> {
+  try {
+    const token = await getActiveAuthToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(apiUrl('/api/admin/subscription/verify-razorpay-payment'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(verificationPayload),
+    });
+
+    const parsed = await parseApiResponse<{
+      success: boolean;
+      message: string;
+      subscription: InstitutionSubscriptionDetails;
+    }>(res, '/api/admin/subscription/verify-razorpay-payment');
+
+    const interval: SubscriptionBillingInterval = verificationPayload.billingCycle === 'Yearly' ? 'annual' : 'monthly';
+    platformService.upgradeSubscription('INST-VIDYA-01', verificationPayload.targetPlan, interval);
+
+    if (parsed.ok && parsed.data && parsed.data.success) {
+      return {
+        success: true,
+        message: parsed.data.message || 'Payment verified and plan updated successfully.',
+        subscription: parsed.data.subscription,
+      };
+    }
+
+    return {
+      success: false,
+      message: parsed.error || 'Payment verification failed.',
+      error: parsed.error ?? undefined,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Network error verifying payment.',
+      error: err?.message,
+    };
+  }
+}
+

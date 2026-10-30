@@ -164,14 +164,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const syncSupabaseUserProfile = async (
     authUser: { id: string; email?: string | null; user_metadata?: Record<string, any> },
-    client: any
+    client: any,
+    explicitToken?: string | null
   ): Promise<UserAccount> => {
     try {
       // 1. Primary secure path: Query authenticated server endpoint using session bearer token.
       // This bypasses client-side PostgreSQL RLS recursion while strictly verifying the caller JWT
       // and checking public.user_profiles using the verified authUser.id (UUID).
       try {
-        const token = await getActiveAuthTokenFromSupabase();
+        const token = explicitToken || (await getActiveAuthTokenFromSupabase(explicitToken));
         if (token) {
           const res = await fetch(apiUrl('/api/auth/me'), {
             headers: {
@@ -202,7 +203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Backend /api/auth/me failed, falling back to direct client query:', endpointErr);
       }
 
-      // 2. Fallback path: Direct PostgREST client query
+      // 2. Direct PostgREST client query
       const { data: profile, error: profileErr } = await client
         .from('user_profiles')
         .select('*')
@@ -212,7 +213,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (profile && !profileErr) {
         // Verified database profile row exists
         const actualRole: UserRole =
-          profile.role === 'admin' || profile.role === 'teacher' || profile.role === 'student'
+          profile.role === 'admin' || profile.role === 'institution_admin' || profile.role === 'super_admin'
+            ? 'admin'
+            : profile.role === 'teacher' || profile.role === 'student'
             ? profile.role
             : 'pending';
 
@@ -248,25 +251,85 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSelectedStudentId(null);
         }
         return updatedAccount;
-      } else {
-        // Profile row in public.user_profiles is MISSING or could not be verified for this authenticated user's UUID!
-        const missingAccount: UserAccount = {
-          id: authUser.id,
-          username: authUser.email ? authUser.email.split('@')[0] : '',
-          email: authUser.email || '',
-          name: authUser.email || 'Profile not found',
-          role: 'pending',
-          studentId: null,
-          staffId: null,
-          isProfileMissing: !profileErr,
-          errorMessage: profileErr ? profileErr.message : undefined,
-        };
-
-        setUser(missingAccount);
-        localStorage.setItem('vidya_user', JSON.stringify(missingAccount));
-        setSelectedStudentId(null);
-        return missingAccount;
       }
+
+      // 3. Resilient Fallback: If direct query encountered RLS recursion (Postgres error 42P17)
+      // or table RLS blocked access, invoke the verified SECURITY DEFINER helper RPC functions.
+      const isRecursionError =
+        Boolean(profileErr) &&
+        (profileErr?.code === '42P17' ||
+          Boolean(profileErr?.message?.toLowerCase().includes('recursion')) ||
+          Boolean(profileErr?.message?.toLowerCase().includes('infinite')));
+
+      if (isRecursionError || profileErr) {
+        try {
+          const { data: rpcRole, error: rpcRoleErr } = await client.rpc('get_my_role');
+          if (!rpcRoleErr && rpcRole) {
+            const actualRole: UserRole =
+              rpcRole === 'admin' || rpcRole === 'institution_admin' || rpcRole === 'super_admin'
+                ? 'admin'
+                : rpcRole === 'teacher' || rpcRole === 'student'
+                ? rpcRole
+                : 'pending';
+
+            const { data: rpcStudentId } = await client.rpc('get_my_student_id');
+            const { data: rpcStaffId } = await client.rpc('get_my_staff_id');
+
+            const studentId =
+              actualRole === 'student' && rpcStudentId !== null && rpcStudentId !== undefined
+                ? Number(rpcStudentId)
+                : null;
+            const staffId = actualRole === 'teacher' ? (rpcStaffId ?? null) : null;
+
+            const actualName = authUser.user_metadata?.full_name?.trim() || authUser.email || '';
+            const actualEmail = authUser.email || '';
+            const username = actualEmail.includes('@')
+              ? actualEmail.split('@')[0]
+              : actualName.toLowerCase().replace(/\s+/g, '');
+
+            const rpcAccount: UserAccount = {
+              id: authUser.id,
+              username,
+              email: actualEmail,
+              name: actualName,
+              role: actualRole,
+              studentId,
+              staffId,
+              isProfileMissing: false,
+            };
+
+            setUser(rpcAccount);
+            localStorage.setItem('vidya_user', JSON.stringify(rpcAccount));
+
+            if (actualRole === 'student') {
+              setSelectedStudentId(studentId ? String(studentId) : null);
+            } else if (actualRole === 'teacher') {
+              setSelectedStudentId(null);
+            }
+            return rpcAccount;
+          }
+        } catch (rpcErr) {
+          console.warn('RPC role recovery error:', rpcErr);
+        }
+      }
+
+      // Profile row in public.user_profiles is genuinely MISSING
+      const missingAccount: UserAccount = {
+        id: authUser.id,
+        username: authUser.email ? authUser.email.split('@')[0] : '',
+        email: authUser.email || '',
+        name: authUser.email || 'Profile not found',
+        role: 'pending',
+        studentId: null,
+        staffId: null,
+        isProfileMissing: !profileErr,
+        errorMessage: profileErr && !isRecursionError ? profileErr.message : undefined,
+      };
+
+      setUser(missingAccount);
+      localStorage.setItem('vidya_user', JSON.stringify(missingAccount));
+      setSelectedStudentId(null);
+      return missingAccount;
     } catch (err: any) {
       console.warn('Error querying user_profiles for UUID:', authUser.id, err);
       const fallbackAccount: UserAccount = {
@@ -327,7 +390,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           } else {
             // Sync current authenticated Supabase session on mount
-            await syncSupabaseUserProfile(session.user, client);
+            await syncSupabaseUserProfile(session.user, client, session.access_token);
           }
         } finally {
           setAuthLoading(false);
@@ -342,7 +405,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(null);
             localStorage.removeItem('vidya_user');
           } else if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
-            await syncSupabaseUserProfile(session.user, client);
+            await syncSupabaseUserProfile(session.user, client, session.access_token);
           }
         } finally {
           setAuthLoading(false);
@@ -364,17 +427,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { session } } = await client.auth.getSession();
     if (!session?.user) return 'pending';
 
-    const updatedAccount = await syncSupabaseUserProfile(session.user, client);
+    const updatedAccount = await syncSupabaseUserProfile(session.user, client, session.access_token);
     return updatedAccount.role;
   };
 
-  const refreshSession = async (): Promise<string | null> => {
+  const refreshSession = React.useCallback(async (): Promise<string | null> => {
     return await refreshSupabaseSession();
-  };
+  }, []);
 
-  const getActiveAuthToken = async (): Promise<string | null> => {
+  const getActiveAuthToken = React.useCallback(async (): Promise<string | null> => {
     return await getActiveAuthTokenFromSupabase();
-  };
+  }, []);
 
   const verifyPlatformOwnerAuthorization = async (): Promise<{
     success: boolean;
@@ -784,7 +847,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (!error && data.user) {
-        await syncSupabaseUserProfile(data.user, client);
+        await syncSupabaseUserProfile(data.user, client, data.session?.access_token);
         return { success: true };
       }
 

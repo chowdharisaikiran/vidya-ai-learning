@@ -70,7 +70,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     } finally {
       setLoading(false);
     }
-  }, [getActiveAuthToken]);
+  }, []);
 
   const handleSessionRefreshAndRetry = async () => {
     setLoading(true);

@@ -21,7 +21,10 @@ import {
   FileSpreadsheet,
   Search,
   ExternalLink,
+  Check,
+  ArrowUpRight,
 } from 'lucide-react';
+import { AVAILABLE_PLANS, formatINR } from '../services/subscriptionService';
 
 interface LandingPageProps {
   onGoToLogin: () => void;
@@ -33,6 +36,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin, onGoToSig
   const [interactiveGpa, setInteractiveGpa] = useState<number>(3.4);
   const [interactiveStudyHours, setInteractiveStudyHours] = useState<number>(18);
   const [interactiveAttendance, setInteractiveAttendance] = useState<number>(92);
+  const [subscriptionCycle, setSubscriptionCycle] = useState<'Yearly' | 'Monthly'>('Yearly');
 
   // Compute live prototype risk & recommendation in the interactive demo
   const calculatedScore = Math.min(
@@ -65,6 +69,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin, onGoToSig
             <a href="#overview" className="hover:text-slate-900 transition-colors">Overview</a>
             <a href="#features" className="hover:text-slate-900 transition-colors">Core Pillars</a>
             <a href="#roles" className="hover:text-slate-900 transition-colors">Portals & Roles</a>
+            <a href="#subscription" className="hover:text-slate-900 transition-colors">Subscription</a>
             <a href="#simulator" className="hover:text-slate-900 transition-colors">Live Simulation</a>
             <a href="#curriculum" className="hover:text-slate-900 transition-colors">Impact & Metrics</a>
           </nav>
@@ -497,6 +502,154 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin, onGoToSig
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      </section>
+
+      {/* Subscription Plans Section (Reusing exact AdminSubscriptionView design and pricing) */}
+      <section id="subscription" className="py-16 sm:py-24 bg-slate-50/70 border-t border-slate-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div className="space-y-2 max-w-2xl">
+              <span className="text-xs font-mono uppercase tracking-wider text-indigo-600 font-semibold">
+                Institutional Licensing
+              </span>
+              <h2 className="text-3xl font-bold tracking-tight text-slate-900 font-sans">
+                Subscription Plans &amp; Student Quotas
+              </h2>
+              <p className="text-sm text-slate-600 font-serif">
+                Select an institutional tier matching the exact layout and pricing of our application subscription console.
+              </p>
+            </div>
+
+            {/* Billing Cycle Toggle */}
+            <div className="inline-flex items-center p-1 rounded-2xl bg-white border border-slate-200 shadow-xs self-start md:self-auto">
+              <button
+                type="button"
+                onClick={() => setSubscriptionCycle('Monthly')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  subscriptionCycle === 'Monthly'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Monthly Billing
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubscriptionCycle('Yearly')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  subscriptionCycle === 'Yearly'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>Yearly (Annual)</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                  subscriptionCycle === 'Yearly' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  Save ~17%
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Comparison Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+            {AVAILABLE_PLANS.map((plan) => {
+              const price = subscriptionCycle === 'Yearly' ? plan.annualPriceINR : plan.monthlyPriceINR;
+              const priceSub = subscriptionCycle === 'Yearly' ? '/ year' : '/ month';
+
+              return (
+                <div
+                  key={plan.id}
+                  className={`rounded-3xl border transition-all flex flex-col justify-between overflow-hidden relative bg-white ${
+                    plan.recommended
+                      ? 'border-indigo-600 shadow-md ring-2 ring-indigo-600/20'
+                      : 'border-slate-200/80 hover:border-slate-300 shadow-xs'
+                  }`}
+                >
+                  {plan.recommended && (
+                    <div className="bg-indigo-600 text-white text-center py-1 text-[11px] font-bold uppercase tracking-wider">
+                      Most Popular for Colleges
+                    </div>
+                  )}
+
+                  <div className="p-6 sm:p-7 space-y-5 flex-1">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xl font-extrabold text-slate-900 tracking-tight">
+                          {plan.name}
+                        </h4>
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono">
+                          Up to {plan.studentLimit.toLocaleString()} students
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1 leading-relaxed font-serif">
+                        {plan.description}
+                      </p>
+                    </div>
+
+                    {/* Price */}
+                    <div className="pb-4 border-b border-slate-100">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-3xl font-black text-slate-900 font-mono">
+                          {formatINR(price)}
+                        </span>
+                        <span className="text-xs font-medium text-slate-500">{priceSub}</span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[11px] text-slate-400">
+                          {subscriptionCycle === 'Yearly' ? 'Billed annually with volume entitlement' : 'Billed monthly recurring'}
+                        </span>
+                        {subscriptionCycle === 'Yearly' && (() => {
+                          const annualTotalFromMonthly = plan.monthlyPriceINR * 12;
+                          const savingsAmount = annualTotalFromMonthly - plan.annualPriceINR;
+                          const savingsPct = savingsAmount > 0 ? Math.round((savingsAmount / annualTotalFromMonthly) * 100) : 0;
+                          if (savingsPct <= 0) return null;
+                          return (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-mono">
+                              Save {savingsPct}% ({formatINR(savingsAmount)})
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Features List */}
+                    <div className="space-y-2.5">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        Included Capabilities
+                      </p>
+                      <ul className="space-y-2 text-xs text-slate-600 font-serif">
+                        {plan.features.map((feat, i) => (
+                          <li key={i} className="flex items-start gap-2">
+                            <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                            <span className="leading-tight">{feat}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="p-6 pt-0">
+                    <button
+                      type="button"
+                      onClick={onGoToSignup || onGoToLogin}
+                      className={`w-full py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer group ${
+                        plan.recommended
+                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                          : 'bg-slate-900 hover:bg-slate-800 text-white'
+                      }`}
+                    >
+                      <span>Get Started with {plan.name}</span>
+                      <ArrowUpRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>

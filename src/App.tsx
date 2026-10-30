@@ -70,7 +70,7 @@ function getTabFromPath(pathname: string, role: string): string {
   }
 
   // Admin specific
-  if (role === 'admin') {
+  if (role === 'admin' || role === 'institution_admin') {
     if (clean === 'user-roles' || clean === 'roles') return 'user-roles';
     if (clean === 'assignments') return 'assignments';
     if (clean === 'students') return 'students';
@@ -195,7 +195,7 @@ const MainLayout: React.FC = () => {
     }
 
     // 3. Admin Views
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'institution_admin') {
       switch (currentTab) {
         case 'dashboard':
           return <AdminDashboard onNavigate={handleNavigate} />;

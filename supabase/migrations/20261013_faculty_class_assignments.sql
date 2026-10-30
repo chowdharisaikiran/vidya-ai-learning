@@ -28,48 +28,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_fca_unique_staff_student_subject
 -- 2. ENABLE ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.faculty_class_assignments ENABLE ROW LEVEL SECURITY;
 
--- 3. LEAST-PRIVILEGE RLS POLICIES
+-- 3. LEAST-PRIVILEGE RLS POLICIES (Non-recursive using SECURITY DEFINER functions)
 
 -- Policy A: Administrators full read access
 DROP POLICY IF EXISTS "Admins can view all faculty assignments" ON public.faculty_class_assignments;
 CREATE POLICY "Admins can view all faculty assignments"
   ON public.faculty_class_assignments FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
-    )
-  );
+  USING (public.is_admin());
 
 -- Policy B: Administrators can create new assignments
 DROP POLICY IF EXISTS "Admins can insert faculty assignments" ON public.faculty_class_assignments;
 CREATE POLICY "Admins can insert faculty assignments"
   ON public.faculty_class_assignments FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
-    )
-  );
+  WITH CHECK (public.is_admin());
 
 -- Policy C: Administrators can remove assignments
 DROP POLICY IF EXISTS "Admins can delete faculty assignments" ON public.faculty_class_assignments;
 CREATE POLICY "Admins can delete faculty assignments"
   ON public.faculty_class_assignments FOR DELETE TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
-    )
-  );
+  USING (public.is_admin());
 
 -- Policy D: Teachers can only view assignments matching their trusted staff_id from user_profiles
 DROP POLICY IF EXISTS "Teachers can view assigned students" ON public.faculty_class_assignments;
 CREATE POLICY "Teachers can view assigned students"
   ON public.faculty_class_assignments FOR SELECT TO authenticated
   USING (
-    staff_id = (SELECT staff_id FROM public.user_profiles WHERE id = auth.uid())
-    AND (SELECT role FROM public.user_profiles WHERE id = auth.uid()) = 'teacher'
+    staff_id = public.get_my_staff_id()
+    AND public.get_my_role() = 'teacher'
   );
 
 -- Students: Strictly no access policy (access is denied by default under RLS)
+

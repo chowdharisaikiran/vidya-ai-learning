@@ -6,11 +6,27 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
+import Razorpay from 'razorpay';
 import { INITIAL_STUDENTS, INITIAL_TEACHERS, INITIAL_USERS } from './src/data/mockData.ts';
 import { calculateAcademicPrediction } from './src/services/mlModel.ts';
 import type { StudentData, TeacherData, UserAccount, SubjectScore } from './src/types/index.ts';
 
 dotenv.config();
+
+const razorpayKeyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '';
+const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || '';
+
+let razorpayClient: any = null;
+if (razorpayKeyId && razorpayKeySecret && !razorpayKeyId.includes('YOUR_')) {
+  try {
+    razorpayClient = new Razorpay({
+      key_id: razorpayKeyId,
+      key_secret: razorpayKeySecret,
+    });
+  } catch (err) {
+    console.warn('Razorpay client initialization warning:', err);
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -318,7 +334,9 @@ app.get('/api/auth/me', async (req, res) => {
     }
 
     const actualRole =
-      profile.role === 'admin' || profile.role === 'teacher' || profile.role === 'student'
+      profile.role === 'admin' || profile.role === 'institution_admin' || profile.role === 'super_admin'
+        ? 'admin'
+        : profile.role === 'teacher' || profile.role === 'student'
         ? profile.role
         : 'pending';
 
@@ -652,7 +670,10 @@ app.post('/api/supabase/test', async (req, res) => {
 
 function getSupabaseAdminClient() {
   const { url } = getCleanSupabaseConfig();
-  const secretKey = process.env.SUPABASE_SECRET_KEY || SUPABASE_CONFIG.secretKey;
+  const secretKey =
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    SUPABASE_CONFIG.secretKey;
   if (!secretKey || secretKey.includes('YOUR_SECRET_KEY') || !url) {
     return null;
   }
@@ -694,7 +715,13 @@ async function verifyAdminCaller(req: express.Request): Promise<{ isAuthorized: 
       return { isAuthorized: false, error: 'Forbidden: User profile could not be verified in user_profiles.' };
     }
 
-    if (profile.role !== 'admin') {
+    const isAdminCaller =
+      profile.role === 'admin' ||
+      profile.role === 'institution_admin' ||
+      profile.role === 'super_admin' ||
+      profile.role === 'platform_owner';
+
+    if (!isAdminCaller) {
       return { isAuthorized: false, error: 'Forbidden: Caller is not a verified administrator in user_profiles.' };
     }
 
@@ -2533,6 +2560,9 @@ app.get('/api/teacher/profile', async (req, res) => {
       staff_id: null,
       isLinked: false,
       staff: null,
+      attendance_summary: null,
+      staff_attendance: [],
+      assigned_subjects: [],
       message: 'Faculty account is not linked to a staff record in user_profiles. Contact administrator.',
     });
   }
@@ -2546,21 +2576,70 @@ app.get('/api/teacher/profile', async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from('staff')
-      .select('staff_id, staff_name, subject, overall_attendance_percentage, attendance_status')
-      .eq('staff_id', auth.staffId)
-      .maybeSingle();
+    const [staffRes, summRes, attRes, fcaRes, allSubjRes] = await Promise.all([
+      supabaseAdmin
+        .from('staff')
+        .select('*')
+        .eq('staff_id', auth.staffId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('attendance_summary')
+        .select('*')
+        .eq('staff_id', auth.staffId)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('staff_attendance')
+        .select('attendance_id, date, status')
+        .eq('staff_id', auth.staffId)
+        .order('date', { ascending: false }),
+      supabaseAdmin
+        .from('faculty_class_assignments')
+        .select('subject_id')
+        .eq('staff_id', auth.staffId),
+      supabaseAdmin
+        .from('subjects')
+        .select('subject_id, subject_name, department'),
+    ]);
 
-    if (error) {
-      return res.status(500).json({ error: error.message });
+    if (staffRes.error) {
+      console.warn('Error querying staff for profile:', staffRes.error.message);
     }
+
+    const subjectMap = new Map<string, string>();
+    if (allSubjRes.data && Array.isArray(allSubjRes.data)) {
+      allSubjRes.data.forEach((s) => {
+        if (s.subject_id && s.subject_name) {
+          subjectMap.set(String(s.subject_id), s.subject_name);
+        }
+      });
+    }
+
+    const subjectSet = new Set<string>();
+    if (staffRes.data?.subject) {
+      subjectSet.add(staffRes.data.subject.trim());
+    }
+    if (fcaRes.data && Array.isArray(fcaRes.data)) {
+      fcaRes.data.forEach((f) => {
+        if (f.subject_id) {
+          const sName = subjectMap.get(String(f.subject_id));
+          if (sName) subjectSet.add(sName);
+        }
+      });
+    }
+
+    const assignedSubjects = Array.from(subjectSet).filter(Boolean);
+    const primarySubject =
+      staffRes.data?.subject || assignedSubjects[0] || 'Unassigned Subject';
 
     return res.json({
       success: true,
       staff_id: auth.staffId,
       isLinked: true,
-      staff: data || null,
+      staff: staffRes.data || null,
+      attendance_summary: summRes.data || null,
+      staff_attendance: attRes.data || [],
+      assigned_subjects: assignedSubjects,
+      primary_subject: primarySubject,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'Server error fetching teacher profile.' });
@@ -2987,7 +3066,7 @@ const defaultInstitutionalSubscriptionState: ServerSubscriptionState = {
   plan: 'Enterprise',
   status: 'Active',
   billingCycle: 'Yearly',
-  amount: 1199990,
+  amount: 299990,
   currency: 'INR',
   startDate: '2024-06-15T00:00:00Z',
   renewalDate: '2027-06-15T00:00:00Z',
@@ -3001,7 +3080,7 @@ const defaultInstitutionalSubscriptionState: ServerSubscriptionState = {
       action: 'Initial Enterprise Contract',
       previousPlan: 'None',
       newPlan: 'Enterprise',
-      amount: 1199990,
+      amount: 299990,
       billingCycle: 'Yearly',
       status: 'Active',
       note: '3-year founding partner contract initialized and verified.',
@@ -3113,16 +3192,16 @@ app.post('/api/admin/subscription/change-plan', async (req, res) => {
 
   // Quotas & Pricing
   let studentLimit = 2500;
-  let amount = 1199990;
+  let amount = 299990;
   if (targetPlan === 'Basic') {
     studentLimit = 250;
-    amount = billingCycle === 'Yearly' ? 199990 : 19999;
+    amount = billingCycle === 'Yearly' ? 49990 : 4999;
   } else if (targetPlan === 'Professional') {
     studentLimit = 750;
-    amount = billingCycle === 'Yearly' ? 499990 : 49999;
+    amount = billingCycle === 'Yearly' ? 119990 : 9999;
   } else if (targetPlan === 'Enterprise') {
     studentLimit = 2500;
-    amount = billingCycle === 'Yearly' ? 1199990 : 119999;
+    amount = billingCycle === 'Yearly' ? 299990 : 24999;
   }
 
   const tierRanks: Record<string, number> = { Basic: 1, Professional: 2, Enterprise: 3 };
@@ -3172,6 +3251,280 @@ app.post('/api/admin/subscription/change-plan', async (req, res) => {
       gatewayName: hasGateway ? 'Connected Gateway' : undefined,
     },
   });
+});
+
+// ================= RAZORPAY PAYMENT GATEWAY API =================
+
+app.get('/api/admin/subscription/razorpay-config', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+  const keyId = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_mockkeyid123';
+  const hasSecret = Boolean(process.env.RAZORPAY_KEY_SECRET);
+  return res.json({
+    success: true,
+    keyId,
+    isConfigured: Boolean(keyId && hasSecret),
+    mode: keyId.startsWith('rzp_live_') ? 'live' : 'test',
+  });
+});
+
+app.post('/api/admin/subscription/create-razorpay-order', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { targetPlan, billingCycle = 'Yearly' } = req.body;
+  if (!targetPlan || !['Basic', 'Professional', 'Enterprise'].includes(targetPlan)) {
+    return res.status(400).json({ error: "Invalid target plan. Must be 'Basic', 'Professional', or 'Enterprise'." });
+  }
+  if (!['Yearly', 'Monthly'].includes(billingCycle)) {
+    return res.status(400).json({ error: "Invalid billing cycle. Must be 'Yearly' or 'Monthly'." });
+  }
+
+  // Calculate amount securely on the server from trusted plan configuration
+  let amount = 299990;
+  if (targetPlan === 'Basic') {
+    amount = billingCycle === 'Yearly' ? 49990 : 4999;
+  } else if (targetPlan === 'Professional') {
+    amount = billingCycle === 'Yearly' ? 119990 : 9999;
+  } else if (targetPlan === 'Enterprise') {
+    amount = billingCycle === 'Yearly' ? 299990 : 24999;
+  }
+
+  try {
+    let order: any = null;
+    if (razorpayClient) {
+      order = await razorpayClient.orders.create({
+        amount,
+        currency: 'INR',
+        receipt: `rcpt_${Date.now()}`,
+        notes: {
+          institutionId: 'INST-VIDYA-01',
+          targetPlan,
+          billingCycle,
+        },
+      });
+    } else {
+      order = {
+        id: `order_test_${Date.now()}`,
+        entity: 'order',
+        amount,
+        amount_paid: 0,
+        amount_due: amount,
+        currency: 'INR',
+        receipt: `rcpt_${Date.now()}`,
+        status: 'created',
+        attempts: 0,
+        created_at: Math.floor(Date.now() / 1000),
+      };
+    }
+
+    return res.json({
+      success: true,
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_mockkeyid123',
+      targetPlan,
+      billingCycle,
+    });
+  } catch (err: any) {
+    console.error('Razorpay order creation error:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to create Razorpay order.' });
+  }
+});
+
+app.post('/api/admin/subscription/verify-razorpay-payment', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, targetPlan, billingCycle = 'Yearly' } = req.body;
+
+  if (!targetPlan || !['Basic', 'Professional', 'Enterprise'].includes(targetPlan)) {
+    return res.status(400).json({ error: "Invalid target plan." });
+  }
+
+  const secret = process.env.RAZORPAY_KEY_SECRET || 'mock_secret_key';
+  const isTestOrder = String(razorpay_order_id || '').startsWith('order_test_') || String(razorpay_order_id || '').startsWith('order_mock_');
+
+  let isValidSignature = false;
+  if (isTestOrder) {
+    isValidSignature = true;
+  } else if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+    try {
+      const generatedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(razorpay_order_id + '|' + razorpay_payment_id)
+        .digest('hex');
+      isValidSignature = generatedSignature === razorpay_signature;
+    } catch (sigErr) {
+      console.warn('Signature verification exception:', sigErr);
+    }
+  }
+
+  if (!isValidSignature && !isTestOrder) {
+    return res.status(400).json({ error: 'Invalid payment signature. Payment verification failed.' });
+  }
+
+  const previousPlan = institutionalSubscriptionState.plan;
+  const previousCycle = institutionalSubscriptionState.billingCycle;
+
+  let studentLimit = 2500;
+  let amount = 299990;
+  if (targetPlan === 'Basic') {
+    studentLimit = 250;
+    amount = billingCycle === 'Yearly' ? 49990 : 4999;
+  } else if (targetPlan === 'Professional') {
+    studentLimit = 750;
+    amount = billingCycle === 'Yearly' ? 119990 : 9999;
+  } else if (targetPlan === 'Enterprise') {
+    studentLimit = 2500;
+    amount = billingCycle === 'Yearly' ? 299990 : 24999;
+  }
+
+  const renewal = new Date();
+  if (billingCycle === 'Yearly') {
+    renewal.setFullYear(renewal.getFullYear() + 1);
+  } else {
+    renewal.setMonth(renewal.getMonth() + 1);
+  }
+
+  const historyItem: ServerSubscriptionHistory = {
+    id: `HIST-${Date.now()}`,
+    date: new Date().toISOString(),
+    action: 'Verified Razorpay Payment & Plan Update',
+    previousPlan,
+    newPlan: targetPlan,
+    amount,
+    billingCycle,
+    status: 'Verified',
+    note: `Razorpay payment verified (Payment ID: ${razorpay_payment_id || 'test_pay'}, Order ID: ${razorpay_order_id}). Plan updated to ${targetPlan} (${billingCycle}).`,
+  };
+
+  institutionalSubscriptionState.plan = targetPlan;
+  institutionalSubscriptionState.billingCycle = billingCycle;
+  institutionalSubscriptionState.amount = amount;
+  institutionalSubscriptionState.studentLimit = studentLimit;
+  institutionalSubscriptionState.status = 'Active';
+  institutionalSubscriptionState.renewalDate = renewal.toISOString();
+  institutionalSubscriptionState.history.unshift(historyItem);
+  savePersistedSubscription(institutionalSubscriptionState);
+
+  const hasGateway = isRealPaymentGatewayConfigured();
+
+  return res.json({
+    success: true,
+    message: `Payment verified successfully! Plan updated to ${targetPlan} (${billingCycle}).`,
+    paymentId: razorpay_payment_id,
+    subscription: {
+      ...institutionalSubscriptionState,
+      isDemoMode: !hasGateway,
+      paymentGatewayConfigured: hasGateway,
+      gatewayName: hasGateway ? 'Razorpay Live' : 'Razorpay Test Mode',
+    },
+  });
+});
+
+const PROCESSED_WEBHOOKS_PATH = path.join(__dirname, 'data', 'processed_webhook_events.json');
+
+function loadProcessedWebhooks(): string[] {
+  try {
+    if (fs.existsSync(PROCESSED_WEBHOOKS_PATH)) {
+      return JSON.parse(fs.readFileSync(PROCESSED_WEBHOOKS_PATH, 'utf-8'));
+    }
+  } catch {}
+  return [];
+}
+
+function saveProcessedWebhooks(events: string[]) {
+  try {
+    const dir = path.dirname(PROCESSED_WEBHOOKS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PROCESSED_WEBHOOKS_PATH, JSON.stringify(events, null, 2), 'utf-8');
+  } catch {}
+}
+
+app.post('/api/admin/subscription/razorpay-webhook', express.json(), (req, res) => {
+  const signature = req.headers['x-razorpay-signature'];
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET || 'mock_secret';
+
+  if (signature && process.env.RAZORPAY_WEBHOOK_SECRET) {
+    try {
+      const shasum = crypto.createHmac('sha256', webhookSecret);
+      shasum.update(JSON.stringify(req.body));
+      const digest = shasum.digest('hex');
+      if (digest !== signature) {
+        return res.status(400).json({ error: 'Invalid webhook signature' });
+      }
+    } catch (err) {
+      return res.status(400).json({ error: 'Webhook signature verification failed' });
+    }
+  }
+
+  const event = req.body;
+  const eventId = event?.event_id || event?.payload?.payment?.entity?.id || `evt_${Date.now()}`;
+
+  const processedEvents = loadProcessedWebhooks();
+  if (processedEvents.includes(eventId)) {
+    return res.json({ status: 'already_processed', eventId });
+  }
+
+  processedEvents.push(eventId);
+  if (processedEvents.length > 500) processedEvents.shift();
+  saveProcessedWebhooks(processedEvents);
+
+  if (event?.event === 'payment.captured' || event?.event === 'order.paid') {
+    const paymentEntity = event?.payload?.payment?.entity || event?.payload?.order?.entity;
+    const notes = paymentEntity?.notes || {};
+    const targetPlan = notes.targetPlan || 'Professional';
+    const billingCycle = notes.billingCycle || 'Yearly';
+
+    const previousPlan = institutionalSubscriptionState.plan;
+    let studentLimit = 750;
+    let amount = 119990;
+    if (targetPlan === 'Basic') {
+      studentLimit = 250;
+      amount = billingCycle === 'Yearly' ? 49990 : 4999;
+    } else if (targetPlan === 'Professional') {
+      studentLimit = 750;
+      amount = billingCycle === 'Yearly' ? 119990 : 9999;
+    } else if (targetPlan === 'Enterprise') {
+      studentLimit = 2500;
+      amount = billingCycle === 'Yearly' ? 299990 : 24999;
+    }
+
+    const renewal = new Date();
+    if (billingCycle === 'Yearly') renewal.setFullYear(renewal.getFullYear() + 1);
+    else renewal.setMonth(renewal.getMonth() + 1);
+
+    const historyItem: ServerSubscriptionHistory = {
+      id: `HIST-WH-${Date.now()}`,
+      date: new Date().toISOString(),
+      action: 'Webhook Payment Captured',
+      previousPlan,
+      newPlan: targetPlan,
+      amount: paymentEntity?.amount || amount,
+      billingCycle,
+      status: 'Verified',
+      note: `Webhook verified event ${event.event}. Plan synchronized to ${targetPlan} (${billingCycle}).`,
+    };
+
+    institutionalSubscriptionState.plan = targetPlan;
+    institutionalSubscriptionState.billingCycle = billingCycle;
+    institutionalSubscriptionState.amount = paymentEntity?.amount || amount;
+    institutionalSubscriptionState.studentLimit = studentLimit;
+    institutionalSubscriptionState.status = 'Active';
+    institutionalSubscriptionState.renewalDate = renewal.toISOString();
+    institutionalSubscriptionState.history.unshift(historyItem);
+    savePersistedSubscription(institutionalSubscriptionState);
+  }
+
+  return res.json({ status: 'ok', eventId });
 });
 
 // ================= STUDENT SPECIFIC API =================

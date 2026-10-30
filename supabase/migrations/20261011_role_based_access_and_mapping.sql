@@ -58,119 +58,190 @@ ALTER TABLE public.recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.staff_attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance_summary ENABLE ROW LEVEL SECURITY;
 
--- 4. POLICIES: public.user_profiles
--- Users can view their own profile
+-- 4. SECURITY DEFINER HELPER FUNCTIONS (Bypasses RLS to eliminate recursion)
+CREATE OR REPLACE FUNCTION public.get_my_role()
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT role FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('admin', 'institution_admin', 'super_admin')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_teacher_or_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles
+    WHERE id = auth.uid() AND role IN ('teacher', 'admin', 'institution_admin', 'super_admin')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_student_id()
+RETURNS INTEGER
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT student_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_my_staff_id()
+RETURNS TEXT
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+  SELECT staff_id FROM public.user_profiles WHERE id = auth.uid();
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_teacher_or_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_student_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_my_staff_id() TO authenticated;
+
+-- 5. POLICIES: public.user_profiles
 DROP POLICY IF EXISTS "Users can read own profile" ON public.user_profiles;
 DROP POLICY IF EXISTS "Users can view own profile" ON public.user_profiles;
-CREATE POLICY "Users can view own profile"
-  ON public.user_profiles FOR SELECT TO authenticated
-  USING (auth.uid() = id);
-
--- Admins can view all profiles
 DROP POLICY IF EXISTS "Admins can view all profiles" ON public.user_profiles;
-CREATE POLICY "Admins can view all profiles"
-  ON public.user_profiles FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin'));
-
--- Only Admins can modify roles and dataset mappings
+DROP POLICY IF EXISTS "Admins can view all user profiles" ON public.user_profiles;
 DROP POLICY IF EXISTS "Admins can update user profiles and roles" ON public.user_profiles;
-CREATE POLICY "Admins can update user profiles and roles"
-  ON public.user_profiles FOR UPDATE TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin'))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin'));
-
--- Users can update only their own full_name (cannot alter role or mappings)
 DROP POLICY IF EXISTS "Users can update own name only" ON public.user_profiles;
-CREATE POLICY "Users can update own name only"
+DROP POLICY IF EXISTS "Users can update own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users and admins can view profiles" ON public.user_profiles;
+DROP POLICY IF EXISTS "Admins can update all profiles" ON public.user_profiles;
+
+CREATE POLICY "Users and admins can view profiles"
+  ON public.user_profiles FOR SELECT TO authenticated
+  USING (
+    auth.uid() = id
+    OR public.is_admin()
+  );
+
+CREATE POLICY "Users can insert own profile"
+  ON public.user_profiles FOR INSERT TO authenticated
+  WITH CHECK (
+    auth.uid() = id
+    AND role = 'student'
+  );
+
+CREATE POLICY "Users can update own profile"
   ON public.user_profiles FOR UPDATE TO authenticated
   USING (auth.uid() = id)
   WITH CHECK (
     auth.uid() = id
-    AND role = (SELECT role FROM public.user_profiles WHERE id = auth.uid())
-    AND student_id IS NOT DISTINCT FROM (SELECT student_id FROM public.user_profiles WHERE id = auth.uid())
-    AND staff_id IS NOT DISTINCT FROM (SELECT staff_id FROM public.user_profiles WHERE id = auth.uid())
+    AND role = public.get_my_role()
+    AND student_id IS NOT DISTINCT FROM public.get_my_student_id()
+    AND staff_id IS NOT DISTINCT FROM public.get_my_staff_id()
   );
 
--- 5. POLICIES: public.students
+CREATE POLICY "Admins can update all profiles"
+  ON public.user_profiles FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- 6. POLICIES: public.students
 DROP POLICY IF EXISTS "Role-based read students" ON public.students;
 CREATE POLICY "Role-based read students"
   ON public.students FOR SELECT TO authenticated
   USING (
-    student_id = (SELECT student_id FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 6. POLICIES: public.academic_performance
+-- 7. POLICIES: public.academic_performance
 DROP POLICY IF EXISTS "Role-based read academic_performance" ON public.academic_performance;
 CREATE POLICY "Role-based read academic_performance"
   ON public.academic_performance FOR SELECT TO authenticated
   USING (
-    student_id = (SELECT student_id FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 7. POLICIES: public.student_attendance
+-- 8. POLICIES: public.student_attendance
 DROP POLICY IF EXISTS "Role-based read student_attendance" ON public.student_attendance;
 CREATE POLICY "Role-based read student_attendance"
   ON public.student_attendance FOR SELECT TO authenticated
   USING (
-    student_id = (SELECT student_id FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 8. POLICIES: public.learning_profile
+-- 9. POLICIES: public.learning_profile
 DROP POLICY IF EXISTS "Role-based read learning_profile" ON public.learning_profile;
 CREATE POLICY "Role-based read learning_profile"
   ON public.learning_profile FOR SELECT TO authenticated
   USING (
-    student_id::text = (SELECT student_id::text FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 9. POLICIES: public.predictions
+-- 10. POLICIES: public.predictions
 DROP POLICY IF EXISTS "Role-based read predictions" ON public.predictions;
 CREATE POLICY "Role-based read predictions"
   ON public.predictions FOR SELECT TO authenticated
   USING (
-    student_id::text = (SELECT student_id::text FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 10. POLICIES: public.recommendations
+-- 11. POLICIES: public.recommendations
 DROP POLICY IF EXISTS "Role-based read recommendations" ON public.recommendations;
 CREATE POLICY "Role-based read recommendations"
   ON public.recommendations FOR SELECT TO authenticated
   USING (
-    student_id::text = (SELECT student_id::text FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin'))
+    student_id = public.get_my_student_id()
+    OR public.is_teacher_or_admin()
   );
 
--- 11. POLICIES: public.subjects
+-- 12. POLICIES: public.subjects
 DROP POLICY IF EXISTS "Authenticated users read subjects" ON public.subjects;
 CREATE POLICY "Authenticated users read subjects"
   ON public.subjects FOR SELECT TO authenticated
   USING (true);
 
--- 12. POLICIES: public.staff
+-- 13. POLICIES: public.staff
 DROP POLICY IF EXISTS "Teachers and Admins read staff" ON public.staff;
 CREATE POLICY "Teachers and Admins read staff"
   ON public.staff FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role IN ('teacher', 'admin')));
+  USING (public.is_teacher_or_admin());
 
--- 13. POLICIES: public.staff_attendance
+-- 14. POLICIES: public.staff_attendance
 DROP POLICY IF EXISTS "Staff attendance role isolation" ON public.staff_attendance;
 CREATE POLICY "Staff attendance role isolation"
   ON public.staff_attendance FOR SELECT TO authenticated
   USING (
-    staff_id = (SELECT staff_id FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin')
+    staff_id = public.get_my_staff_id()
+    OR public.is_admin()
   );
 
--- 14. POLICIES: public.attendance_summary (Staff Attendance Summary)
+-- 15. POLICIES: public.attendance_summary (Staff Attendance Summary)
 DROP POLICY IF EXISTS "Attendance summary role isolation" ON public.attendance_summary;
 CREATE POLICY "Attendance summary role isolation"
   ON public.attendance_summary FOR SELECT TO authenticated
   USING (
-    staff_id = (SELECT staff_id FROM public.user_profiles WHERE id = auth.uid())
-    OR EXISTS (SELECT 1 FROM public.user_profiles WHERE id = auth.uid() AND role = 'admin')
+    staff_id = public.get_my_staff_id()
+    OR public.is_admin()
   );
