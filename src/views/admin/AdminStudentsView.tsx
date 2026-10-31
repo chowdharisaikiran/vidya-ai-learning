@@ -505,21 +505,25 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
                     <td className="py-3 px-4 text-slate-500">{s.Age} / {s.Gender}</td>
                     <td className="py-3 px-4 text-slate-600 font-medium">{s.Class_Grade}</td>
                     <td className="py-3 px-4 font-mono font-semibold">
-                      <span className={s.Attendance_Percent < 75 ? 'text-rose-600 font-bold' : 'text-slate-800'}>
-                        {s.Attendance_Percent}%
+                      <span className={s.Attendance_Percent !== null && s.Attendance_Percent !== undefined && s.Attendance_Percent < 75 ? 'text-rose-600 font-bold' : 'text-slate-800'}>
+                        {s.Attendance_Percent !== null && s.Attendance_Percent !== undefined ? `${s.Attendance_Percent}%` : '—'}
                       </span>
                     </td>
-                    <td className="py-3 px-4 font-mono">{s.Study_Hours_Per_Day} hrs</td>
+                    <td className="py-3 px-4 font-mono">
+                      {s.Study_Hours_Per_Day !== null && s.Study_Hours_Per_Day !== undefined ? `${s.Study_Hours_Per_Day} hrs` : '—'}
+                    </td>
                     <td className="py-3 px-4 font-mono text-slate-600">
-                      {s.Assignment_Score}% / {s.Quiz_Score}%
+                      {s.Assignment_Score !== null && s.Assignment_Score !== undefined && s.Quiz_Score !== null && s.Quiz_Score !== undefined
+                        ? `${s.Assignment_Score}% / ${s.Quiz_Score}%`
+                        : '—'}
                     </td>
                     <td className="py-3 px-4 font-mono">
-                      {s.Previous_Score !== undefined && s.Previous_Score !== null && s.Previous_Score > 0 ? `${s.Previous_Score}%` : <span className="text-slate-400 italic">Not available</span>}
+                      {s.Previous_Score !== undefined && s.Previous_Score !== null ? `${s.Previous_Score}%` : <span className="text-slate-400 italic">Not available</span>}
                     </td>
                     <td className="py-3 px-4 text-slate-600">
-                      {s.Sleep_Hours}h / {s.Stress_Level}
+                      {s.Sleep_Hours !== null && s.Sleep_Hours !== undefined ? `${s.Sleep_Hours}h` : '—'} / {s.Stress_Level || 'Not assessed'}
                     </td>
-                    <td className="py-3 px-4 text-slate-600 font-medium">{s.Learning_Style}</td>
+                    <td className="py-3 px-4 text-slate-600 font-medium">{s.Learning_Style || 'Not assessed'}</td>
                     <td className="py-3 px-4">
                       <span
                         title="Suggested subject based on academic profile"
@@ -532,8 +536,12 @@ export const AdminStudentsView: React.FC<AdminStudentsViewProps> = ({
                         {s.Weak_Subject && s.Weak_Subject !== 'None' ? s.Weak_Subject : 'Not assessed'}
                       </span>
                     </td>
-                    <td className="py-3 px-4 font-mono font-semibold text-slate-800">{s.Exam_Score}%</td>
-                    <td className="py-3 px-4 font-mono font-bold text-blue-600">{s.Overall_Score}%</td>
+                    <td className="py-3 px-4 font-mono font-semibold text-slate-800">
+                      {s.Exam_Score !== null && s.Exam_Score !== undefined ? `${s.Exam_Score}%` : '—'}
+                    </td>
+                    <td className="py-3 px-4 font-mono font-bold text-blue-600">
+                      {s.Overall_Score !== null && s.Overall_Score !== undefined ? `${s.Overall_Score}%` : '—'}
+                    </td>
                     <td className="py-3 px-4">
                       <RiskBadge level={s.Risk_Level} size="sm" />
                     </td>

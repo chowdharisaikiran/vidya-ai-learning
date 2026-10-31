@@ -3058,6 +3058,126 @@ interface ServerSubscriptionState {
 }
 
 const SUBSCRIPTION_STORAGE_PATH = path.join(__dirname, 'src', 'data', 'institution_subscription.json');
+const PLANS_STORAGE_PATH = path.join(__dirname, 'src', 'data', 'subscription_plans.json');
+
+const DEFAULT_PLANS = [
+  {
+    id: 'plan_basic',
+    name: 'Basic',
+    annualPriceINR: 49990,
+    monthlyPriceINR: 4999,
+    annualPriceUSD: 599,
+    monthlyPriceUSD: 59,
+    studentQuota: 250,
+    studentLimit: 250,
+    description: 'Essential academic tracking, automated attendance, and core student reports for small departments.',
+    colorTheme: 'blue',
+    features: [
+      'Up to 250 Active Students',
+      'Student & Faculty Directories',
+      'Core Attendance & Gradebook Tracking',
+      'Standard CSV Dataset Export',
+      'Role-based access control (Admin, Teacher, Student)',
+      'Basic Email Support (48h SLA)',
+      'Community Documentation Access',
+    ],
+  },
+  {
+    id: 'plan_pro',
+    name: 'Professional',
+    annualPriceINR: 119990,
+    monthlyPriceINR: 9999,
+    annualPriceUSD: 1499,
+    monthlyPriceUSD: 149,
+    studentQuota: 750,
+    studentLimit: 750,
+    description: 'Advanced AI predictive risk forecasting, ML early intervention, and multi-department analytics.',
+    recommended: true,
+    colorTheme: 'indigo',
+    features: [
+      'Up to 750 Active Students',
+      'Everything in Basic Plan',
+      'AI Academic Risk Prediction & Forecasting',
+      'Machine Learning Intervention Engine',
+      'Auto-matching Faculty-Student Mentor Assignments',
+      'Departmental Analytics & Trend Benchmarks',
+      'Bulk Data Ingestion & Sync',
+      'Priority Support (12h SLA)',
+    ],
+  },
+  {
+    id: 'plan_enterprise',
+    name: 'Enterprise',
+    annualPriceINR: 299990,
+    monthlyPriceINR: 24999,
+    annualPriceUSD: 3499,
+    monthlyPriceUSD: 349,
+    studentQuota: 2500,
+    studentLimit: 2500,
+    description: 'Full-scale institutional deployment with custom AI models, custom domain, and dedicated account management.',
+    colorTheme: 'purple',
+    features: [
+      'Up to 2,500 Active Students',
+      'Everything in Professional Plan',
+      'Full-scale Multi-department Governance',
+      'Dedicated Institutional Database & RLS Policy Enforcement',
+      'Custom Machine Learning Feature Weights & Fine-tuning',
+      'Automated SMS & WhatsApp Parent Alerts Workflow',
+      'Dedicated Account Manager & 99.9% Uptime SLA',
+      'Direct API Access & Priority SIS Integration',
+    ],
+  },
+];
+
+function loadPersistedPlans(): any[] {
+  try {
+    if (fs.existsSync(PLANS_STORAGE_PATH)) {
+      const raw = fs.readFileSync(PLANS_STORAGE_PATH, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not read persisted plans file, using default:', err);
+  }
+  return DEFAULT_PLANS;
+}
+
+function savePersistedPlans(plans: any[]): void {
+  try {
+    const dir = path.dirname(PLANS_STORAGE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(PLANS_STORAGE_PATH, JSON.stringify(plans, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('Could not save persisted plans file:', err);
+  }
+}
+
+let activePlansCache = loadPersistedPlans();
+
+app.get('/api/plans', (_req, res) => {
+  return res.json({ success: true, plans: activePlansCache });
+});
+
+app.post('/api/plans', async (req, res) => {
+  const auth = await verifyAdminCaller(req);
+  if (!auth.isAuthorized) {
+    return res.status(auth.error?.includes('Forbidden') ? 403 : 401).json({ error: auth.error });
+  }
+
+  const { plans } = req.body;
+  if (!Array.isArray(plans) || plans.length === 0) {
+    return res.status(400).json({ error: 'Valid plans array required.' });
+  }
+
+  activePlansCache = plans;
+  savePersistedPlans(plans);
+
+  return res.json({ success: true, message: 'Subscription plan configuration successfully updated.', plans: activePlansCache });
+});
 
 const defaultInstitutionalSubscriptionState: ServerSubscriptionState = {
   institutionId: 'INST-VIDYA-01',

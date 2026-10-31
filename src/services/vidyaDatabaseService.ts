@@ -7,6 +7,7 @@ export interface DatabaseStudentRow {
   name: string;
   age: number;
   gender: string;
+  email?: string;
   class_grade?: string;
   attendance_percent?: number;
   study_hours_per_day?: number;
@@ -15,7 +16,9 @@ export interface DatabaseStudentRow {
   previous_score?: number;
   weak_subject?: string;
   stress_level?: string;
+  parental_support?: string;
   tutoring?: string;
+  internet_access?: string;
   risk_level?: string;
 }
 

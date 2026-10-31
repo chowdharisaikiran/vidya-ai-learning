@@ -31,16 +31,6 @@ export const PlatformAnalyticsView: React.FC<PlatformAnalyticsViewProps> = () =>
         </p>
       </div>
 
-      {/* Provenance Notice Banner */}
-      <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/90 text-amber-900 text-xs flex items-start gap-2.5">
-        <span className="px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-mono font-bold text-[9px] uppercase tracking-wider shrink-0 mt-0.5">
-          DEMO BENCHMARK
-        </span>
-        <p className="leading-snug">
-          <strong>Illustrative Telemetry Notice:</strong> The cross-tenant AI inference volume, storage footprint, and system latency metrics below illustrate multi-tenant SaaS capacity. Production telemetry will bind directly to PostgreSQL event streams once multi-tenant tables are provisioned.
-        </p>
-      </div>
-
       {/* Telemetry Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">

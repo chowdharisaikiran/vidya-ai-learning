@@ -24,7 +24,7 @@ import {
   Check,
   ArrowUpRight,
 } from 'lucide-react';
-import { AVAILABLE_PLANS, formatINR } from '../services/subscriptionService';
+import { AVAILABLE_PLANS, fetchAvailablePlans, formatINR, PlanFeatureDefinition } from '../services/subscriptionService';
 
 interface LandingPageProps {
   onGoToLogin: () => void;
@@ -37,6 +37,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin, onGoToSig
   const [interactiveStudyHours, setInteractiveStudyHours] = useState<number>(18);
   const [interactiveAttendance, setInteractiveAttendance] = useState<number>(92);
   const [subscriptionCycle, setSubscriptionCycle] = useState<'Yearly' | 'Monthly'>('Yearly');
+  const [plans, setPlans] = useState<PlanFeatureDefinition[]>(AVAILABLE_PLANS);
+
+  React.useEffect(() => {
+    fetchAvailablePlans().then(setPlans);
+  }, []);
 
   // Compute live prototype risk & recommendation in the interactive demo
   const calculatedScore = Math.min(
@@ -556,7 +561,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGoToLogin, onGoToSig
 
           {/* 3 Comparison Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-            {AVAILABLE_PLANS.map((plan) => {
+            {plans.map((plan) => {
               const price = subscriptionCycle === 'Yearly' ? plan.annualPriceINR : plan.monthlyPriceINR;
               const priceSub = subscriptionCycle === 'Yearly' ? '/ year' : '/ month';
 

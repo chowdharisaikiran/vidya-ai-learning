@@ -460,3 +460,38 @@ export async function verifyRazorpayPayment(verificationPayload: {
   }
 }
 
+export async function fetchAvailablePlans(): Promise<PlanFeatureDefinition[]> {
+  try {
+    const res = await fetch(apiUrl('/api/plans'), { method: 'GET' });
+    const parsed = await parseApiResponse<{ success: boolean; plans: PlanFeatureDefinition[] }>(res, '/api/plans');
+    if (parsed.ok && parsed.data && Array.isArray(parsed.data.plans)) {
+      return parsed.data.plans;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch remote plans, using local AVAILABLE_PLANS fallback:', err);
+  }
+  return AVAILABLE_PLANS;
+}
+
+export async function updatePlanConfiguration(plans: PlanFeatureDefinition[]): Promise<{ success: boolean; message: string; error?: string }> {
+  try {
+    const token = await getActiveAuthToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(apiUrl('/api/plans'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ plans }),
+    });
+    const parsed = await parseApiResponse<{ success: boolean; message: string }>(res, '/api/plans');
+    if (parsed.ok && parsed.data) {
+      return { success: true, message: parsed.data.message || 'Plans updated successfully.' };
+    }
+    return { success: false, message: parsed.error || 'Failed to update plans.', error: parsed.error || undefined };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Network error updating plans.', error: err?.message };
+  }
+}
+
+

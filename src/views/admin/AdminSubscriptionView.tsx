@@ -28,6 +28,7 @@ import {
   createRazorpayOrder,
   verifyRazorpayPayment,
   AVAILABLE_PLANS,
+  fetchAvailablePlans,
   formatINR,
   getPlanTierRank,
   InstitutionSubscriptionDetails,
@@ -59,17 +60,25 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
+  const [plans, setPlans] = useState<PlanFeatureDefinition[]>(AVAILABLE_PLANS);
+
   const loadSubscription = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchInstitutionSubscription();
-      if (res.error && !res.data) {
-        setError(res.error);
-      } else if (res.data) {
-        setSubscription(res.data);
-        if (res.data.billingCycle) {
-          setSelectedCycle(res.data.billingCycle);
+      const [subRes, fetchedPlans] = await Promise.all([
+        fetchInstitutionSubscription(),
+        fetchAvailablePlans(),
+      ]);
+      if (fetchedPlans && fetchedPlans.length > 0) {
+        setPlans(fetchedPlans);
+      }
+      if (subRes.error && !subRes.data) {
+        setError(subRes.error);
+      } else if (subRes.data) {
+        setSubscription(subRes.data);
+        if (subRes.data.billingCycle) {
+          setSelectedCycle(subRes.data.billingCycle);
         }
       }
     } catch (err: any) {
@@ -490,7 +499,7 @@ export const AdminSubscriptionView: React.FC<AdminSubscriptionViewProps> = ({ on
 
         {/* 3 Comparison Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-1">
-          {AVAILABLE_PLANS.map((plan) => {
+          {plans.map((plan) => {
             const isCurrent = currentPlanName.toLowerCase() === plan.name.toLowerCase();
             const planRank = getPlanTierRank(plan.name);
             const isUpgrade = planRank > currentRank;
